@@ -9,13 +9,14 @@ from rest_framework.exceptions import APIException, NotFound
 from rest_framework.exceptions import PermissionDenied as DRFPermissionDenied
 from rest_framework.views import exception_handler as drf_exception_handler
 
-# Maps a violated constraint name to the field a client should look at.
-CONSTRAINT_FIELDS = {
-    "uniq_live_ndc": "ndc",
-    "uniq_live_npi": "npi",
-    "uniq_live_ncpdp": "ncpdp_id",
-    "uniq_live_location_npi": "npi",
-    "uniq_live_store_number_per_pharmacy": "store_number",
+# Maps a violated partial-unique constraint to (record, field, label): what the
+# row is called, the field a client should look at, and what a client calls it.
+LIVE_UNIQUE_CONSTRAINTS = {
+    "uniq_live_ndc": ("medication", "ndc", "NDC"),
+    "uniq_live_npi": ("prescriber", "npi", "NPI"),
+    "uniq_live_ncpdp": ("pharmacy location", "ncpdp_id", "NCPDP ID"),
+    "uniq_live_location_npi": ("pharmacy location", "npi", "NPI"),
+    "uniq_live_store_number_per_pharmacy": ("pharmacy location", "store_number", "store number"),
 }
 
 
@@ -29,6 +30,26 @@ class Conflict(APIException):
     def __init__(self, detail=None, code=None, details=None):
         super().__init__(detail, code)
         self.details = details or {}
+
+
+def duplicate(record, field, label, value=None, existing=None):
+    """The 409 for an identifier a live record already holds.
+
+    Serializers raise it with the offending value and the existing row; the
+    exception handler raises it for the IntegrityError a concurrent create
+    slips past them, when neither is known. Same code and message either way,
+    so a client keys on one thing.
+    """
+    details = {"field": field}
+    if value is not None:
+        details[field] = value
+    if existing is not None:
+        details["existing_id"] = str(existing.pk)
+    return Conflict(
+        f"A live {record} with this {label} already exists.",
+        code=f"duplicate_{field}",
+        details=details,
+    )
 
 
 def _envelope(code, message, details):
@@ -72,13 +93,9 @@ def exception_handler(exc, context):
 
     if isinstance(exc, IntegrityError):
         text = str(exc)
-        for name, field in CONSTRAINT_FIELDS.items():
+        for name, (record, field, label) in LIVE_UNIQUE_CONSTRAINTS.items():
             if name in text:
-                exc = Conflict(
-                    f"A live record with this {field} already exists.",
-                    code=f"duplicate_{field}",
-                    details={"field": field, "constraint": name},
-                )
+                exc = duplicate(record, field, label)
                 break
 
     response = drf_exception_handler(exc, context)

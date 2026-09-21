@@ -1,9 +1,10 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
-from pharmacy.exceptions import Conflict
 from pharmacy.models import Medication
 from pharmacy.validators import normalize_ndc
+
+from .base import reject_live_duplicate
 
 
 class MedicationSerializer(serializers.ModelSerializer):
@@ -32,16 +33,14 @@ class MedicationSerializer(serializers.ModelSerializer):
         except DjangoValidationError as exc:
             raise serializers.ValidationError(exc.messages) from exc
 
-        existing = Medication.objects.filter(ndc=normalized)
-        if self.instance:
-            existing = existing.exclude(pk=self.instance.pk)
-        conflict = existing.first()
-        if conflict:
-            raise Conflict(
-                "A live medication with this NDC already exists.",
-                code="duplicate_ndc",
-                details={"field": "ndc", "ndc": normalized, "existing_id": str(conflict.pk)},
-            )
+        reject_live_duplicate(
+            Medication.objects.filter(ndc=normalized),
+            self.instance,
+            record="medication",
+            field="ndc",
+            label="NDC",
+            value=normalized,
+        )
         return normalized
 
 

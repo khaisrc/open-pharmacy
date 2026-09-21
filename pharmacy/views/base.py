@@ -1,4 +1,3 @@
-from django.db.models import ProtectedError
 from rest_framework import viewsets
 
 from pharmacy.exceptions import Conflict
@@ -10,7 +9,8 @@ class SoftDeleteModelViewSet(viewsets.ModelViewSet):
 
     safedelete bypasses Django's on_delete when soft-deleting, so PROTECT never
     fires and the guard has to live here. PROTECT stays on the FKs as a backstop
-    for a genuine hard_delete() in some future purge job.
+    for a genuine hard_delete() in some future purge job; the exception handler
+    maps the ProtectedError that would raise, so nothing here catches it.
     """
 
     # (related_name, human label) pairs checked before a delete is allowed.
@@ -28,15 +28,5 @@ class SoftDeleteModelViewSet(viewsets.ModelViewSet):
                 code="referenced",
                 details={"referenced_by": blocking},
             )
-        try:
-            instance.delete()
-        except ProtectedError as exc:
-            raise Conflict(
-                "Cannot delete a record that other records still reference.",
-                code="referenced",
-                details={
-                    "referenced_by": sorted(
-                        {obj._meta.verbose_name for obj in exc.protected_objects}
-                    )
-                },
-            ) from exc
+        instance.delete()
+

@@ -1,11 +1,11 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
-from pharmacy.exceptions import Conflict
 from pharmacy.models import Address, Pharmacy, PharmacyLocation
 from pharmacy.validators import normalize_ncpdp, validate_npi
 
 from .address import AddressSummarySerializer
+from .base import reject_live_duplicate
 from .pharmacy import PharmacySummarySerializer
 
 
@@ -53,36 +53,28 @@ class PharmacyLocationSerializer(serializers.ModelSerializer):
         except DjangoValidationError as exc:
             raise serializers.ValidationError(exc.messages) from exc
 
-        existing = PharmacyLocation.objects.filter(ncpdp_id=normalized)
-        if self.instance:
-            existing = existing.exclude(pk=self.instance.pk)
-        conflict = existing.first()
-        if conflict:
-            raise Conflict(
-                "A live pharmacy location with this NCPDP ID already exists.",
-                code="duplicate_ncpdp_id",
-                details={
-                    "field": "ncpdp_id",
-                    "ncpdp_id": normalized,
-                    "existing_id": str(conflict.pk),
-                },
-            )
+        reject_live_duplicate(
+            PharmacyLocation.objects.filter(ncpdp_id=normalized),
+            self.instance,
+            record="pharmacy location",
+            field="ncpdp_id",
+            label="NCPDP ID",
+            value=normalized,
+        )
         return normalized
 
     def validate_npi(self, value):
         if not value:
             return value
         validate_npi(value)
-        existing = PharmacyLocation.objects.filter(npi=value)
-        if self.instance:
-            existing = existing.exclude(pk=self.instance.pk)
-        conflict = existing.first()
-        if conflict:
-            raise Conflict(
-                "A live pharmacy location with this NPI already exists.",
-                code="duplicate_npi",
-                details={"field": "npi", "npi": value, "existing_id": str(conflict.pk)},
-            )
+        reject_live_duplicate(
+            PharmacyLocation.objects.filter(npi=value),
+            self.instance,
+            record="pharmacy location",
+            field="npi",
+            label="NPI",
+            value=value,
+        )
         return value
 
     def validate(self, attrs):
@@ -91,20 +83,14 @@ class PharmacyLocationSerializer(serializers.ModelSerializer):
         pharmacy = attrs.get("pharmacy") or getattr(self.instance, "pharmacy", None)
         store_number = attrs.get("store_number", getattr(self.instance, "store_number", ""))
         if pharmacy and store_number:
-            existing = PharmacyLocation.objects.filter(pharmacy=pharmacy, store_number=store_number)
-            if self.instance:
-                existing = existing.exclude(pk=self.instance.pk)
-            conflict = existing.first()
-            if conflict:
-                raise Conflict(
-                    "This pharmacy already has a live location with that store number.",
-                    code="duplicate_store_number",
-                    details={
-                        "field": "store_number",
-                        "store_number": store_number,
-                        "existing_id": str(conflict.pk),
-                    },
-                )
+            reject_live_duplicate(
+                PharmacyLocation.objects.filter(pharmacy=pharmacy, store_number=store_number),
+                self.instance,
+                record="pharmacy location",
+                field="store_number",
+                label="store number",
+                value=store_number,
+            )
         return attrs
 
 

@@ -1,10 +1,10 @@
 from rest_framework import serializers
 
-from pharmacy.exceptions import Conflict
 from pharmacy.models import Address, Prescriber
 from pharmacy.validators import validate_npi
 
 from .address import AddressSummarySerializer
+from .base import reject_live_duplicate
 
 
 class PrescriberSerializer(serializers.ModelSerializer):
@@ -42,21 +42,15 @@ class PrescriberSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at", "updated_at"]
 
     def validate_npi(self, value):
-        # DRF generates no uniqueness validator for a UniqueConstraint that has
-        # a condition, so the partial index is invisible here and the live-row
-        # check has to be explicit. The handler maps the IntegrityError from a
-        # concurrent create to the same 409.
         validate_npi(value)
-        existing = Prescriber.objects.filter(npi=value)
-        if self.instance:
-            existing = existing.exclude(pk=self.instance.pk)
-        conflict = existing.first()
-        if conflict:
-            raise Conflict(
-                "A live prescriber with this NPI already exists.",
-                code="duplicate_npi",
-                details={"field": "npi", "npi": value, "existing_id": str(conflict.pk)},
-            )
+        reject_live_duplicate(
+            Prescriber.objects.filter(npi=value),
+            self.instance,
+            record="prescriber",
+            field="npi",
+            label="NPI",
+            value=value,
+        )
         return value
 
 
