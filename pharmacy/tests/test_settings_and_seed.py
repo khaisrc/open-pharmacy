@@ -6,8 +6,10 @@ import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.utils import timezone
 
-from pharmacy.models import Pharmacy, PharmacyLocation, Prescription
+from pharmacy.models import Pharmacy, PharmacyLocation, Prescriber, Prescription
+from pharmacy.validators import validate_npi
 
 
 @contextmanager
@@ -97,6 +99,29 @@ class TestSeedLocal:
                 Prescription.objects.count(),
             )
         assert first == second
+
+    def test_is_idempotent_across_days(self, monkeypatch):
+        """The demo prescriptions are keyed on who, what and by whom, never on
+        when: a boot a day later must find them rather than insert four more."""
+        with environment(DJANGO_ENV="local", SEED_DEMO_DATA="true"):
+            call_command("seed_local")
+            first = Prescription.objects.count()
+            later = timezone.now() + timezone.timedelta(days=2)
+            monkeypatch.setattr(
+                "pharmacy.management.commands.seed_local.timezone.now", lambda: later
+            )
+            call_command("seed_local")
+        assert Prescription.objects.count() == first
+
+    def test_seeded_identifiers_pass_the_api_validators(self):
+        """ORM writes skip validators, so a seeded NPI the API would refuse
+        could not be round-tripped through PUT."""
+        with environment(DJANGO_ENV="local", SEED_DEMO_DATA="true"):
+            call_command("seed_local")
+        for npi in Prescriber.objects.values_list("npi", flat=True):
+            validate_npi(npi)
+        for npi in PharmacyLocation.objects.exclude(npi="").values_list("npi", flat=True):
+            validate_npi(npi)
 
     def test_seeds_both_pharmacy_shapes(self):
         with environment(DJANGO_ENV="local", SEED_DEMO_DATA="true"):

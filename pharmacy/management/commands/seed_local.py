@@ -101,7 +101,7 @@ class Command(BaseCommand):
 
         locations = {}
         for key, (pharm, store, ncpdp, npi, addr, ltype, hours) in {
-            "corner": (corner, "", "1417231", "1487654325", "corner", LocationType.RETAIL, False),
+            "corner": (corner, "", "1417231", "1487654323", "corner", LocationType.RETAIL, False),
             "north_a": (chain, "0412", "2938471", "1245319599", "cvs_a", LocationType.RETAIL, True),
             "north_b": (chain, "0587", "3847192", "", "cvs_b", LocationType.RETAIL, False),
             "north_c": (chain, "0913", "4756203", "", "cvs_c", LocationType.SPECIALTY, False),
@@ -133,7 +133,7 @@ class Command(BaseCommand):
         prescribers = {}
         for key, (first, last, npi, ptype) in {
             "chen": ("Alice", "Chen", "1234567893", PractitionerType.MD),
-            "okafor": ("Daniel", "Okafor", "1861234563", PractitionerType.NP),
+            "okafor": ("Daniel", "Okafor", "1861234569", PractitionerType.NP),
         }.items():
             prescribers[key] = Prescriber.objects.get_or_create(
                 npi=npi,
@@ -164,6 +164,10 @@ class Command(BaseCommand):
             )[0]
 
         now = timezone.now()
+        # Each (patient, prescriber, medication) triple below is distinct, so it
+        # is the identity a re-run looks up. The key must not involve time: a
+        # lookup on written_at would match nothing after a day and re-insert
+        # all four on every later boot.
         demo_prescriptions = [
             (
                 "rivera",
@@ -217,10 +221,9 @@ class Command(BaseCommand):
         for pat, presc, med, loc, dose, qty, auth, used, stat, sig in demo_prescriptions:
             Prescription.objects.get_or_create(
                 patient=patients[pat],
+                prescriber=prescribers[presc],
                 medication=medications[med],
-                written_at__gte=now - timedelta(days=1),
                 defaults={
-                    "prescriber": prescribers[presc],
                     "pharmacy_location": locations[loc],
                     "dose_amount": dose,
                     "quantity": qty,
