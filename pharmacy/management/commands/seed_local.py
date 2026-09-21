@@ -210,7 +210,7 @@ class Command(BaseCommand):
                 1,
                 2,
                 0,
-                PrescriptionStatus.DRAFT,
+                PrescriptionStatus.ACTIVE,
                 "Two puffs as needed.",
             ),
         ]
