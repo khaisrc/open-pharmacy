@@ -16,7 +16,6 @@ from .patient import PatientSummarySerializer
 from .pharmacy_location import PharmacyLocationSummarySerializer
 from .prescriber import PrescriberSummarySerializer
 
-
 # A status a client cannot PATCH is not necessarily a status it cannot reach --
 # it just does not get there through this endpoint. Each refusal carries the
 # route that does own the transition, so a client is not left guessing.
