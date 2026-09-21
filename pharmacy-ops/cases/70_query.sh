@@ -16,7 +16,11 @@ make_prescription "$FX_PATIENT" "$FX_PRESCRIBER" "$FX_MEDICATION" '{"fills_autho
 req POST "/prescriptions/${DEAD_RX}/cancel/" >/dev/null
 
 section "pagination"
-req GET "/prescriptions/?page_size=2"
+# Scoped to this run's own patient: the count below is read from one page and
+# asserted against another, and with -p a case file running alongside this one
+# can create a prescription in between. Three prescriptions at a page size of
+# two is the same two-page shape, with a count that cannot move under it.
+req GET "/prescriptions/?patient=${FX_PATIENT}&page_size=2"
 assert_status 200 "a page size can be requested"
 assert_jq '.results | length == 2' "the page holds exactly the requested number of results"
 assert_jq 'has("count") and has("next") and has("previous")' "the page carries count, next and previous"
@@ -24,7 +28,7 @@ assert_jq '.next != null' "there is a next page"
 assert_jq_eq '.previous' 'null' "the first page has no previous page"
 TOTAL="$(jqv .count)"
 
-req GET "/prescriptions/?page_size=2&page=2"
+req GET "/prescriptions/?patient=${FX_PATIENT}&page_size=2&page=2"
 assert_status 200 "the second page can be requested"
 assert_jq '.previous != null' "the second page has a previous page"
 assert_jq_eq '.count' "$TOTAL" "the count is the whole collection, not the page"
@@ -100,7 +104,7 @@ assert_status 200 "prescriptions can be filtered by written_before"
 assert_jq_eq '.count' '1' "written_before returns only the prescription written 400 days ago"
 assert_jq_eq '.results[0].id' "$OLD_RX" "written_before returns the right prescription"
 
-req GET "/prescriptions/?written_after=$(iso_days 3650)"
+req GET "/prescriptions/?written_after=$(iso_days 3650)&patient=${FX_PATIENT}"
 assert_status 200 "a written_after far in the future is accepted"
 assert_jq_eq '.count' '0' "nothing was written after today plus ten years"
 

@@ -1,13 +1,17 @@
 # HTTP + assertion primitives. Sourced by every case file.
 #
-# Every request and every assertion is appended to $RESULT_DIR/events.jsonl.
-# That file, not a shell variable, is how results reach run.sh: each case file
-# runs in its own process, so a counter would not survive the return trip. It
-# is also what bin/report.py renders, which is why a request records its
-# headers and timing even when nothing asserts against them.
+# Every request and every assertion is appended to
+# $RESULT_DIR/events.<case>.jsonl. That file, not a shell variable, is how
+# results reach run.sh: each case file runs in its own process, so a counter
+# would not survive the return trip. It is also what bin/report.py renders,
+# which is why a request records its headers and timing even when nothing
+# asserts against them.
 #
-# Case files run one after another, never concurrently, so appending from each
-# in turn cannot interleave.
+# The log is per case, not one shared file, because run.sh can run case files
+# concurrently (-p). An event carries a whole response body, so concurrent
+# appends to one file would exceed PIPE_BUF and interleave mid-line. run.sh
+# concatenates these in case order once every case has finished, and reads
+# them while they are still being written to draw its progress bars.
 
 : "${BASE_URL:=http://localhost:8000}"
 : "${API_USER:=admin}"
@@ -19,7 +23,7 @@ _BODY_FILE="$(mktemp -t apitestbody)"
 _HDR_FILE="$(mktemp -t apitesthdr)"
 trap 'rm -f "$_BODY_FILE" "$_HDR_FILE"' EXIT
 
-_EVENTS="${RESULT_DIR}/events.jsonl"
+_EVENTS="${RESULT_DIR}/events.${CASE_NAME}.jsonl"
 
 STATUS=""
 BODY=""
@@ -33,7 +37,7 @@ CURRENT_SECTION=""
 _REQ_SEQ=0
 
 _c_green=''; _c_red=''; _c_dim=''; _c_off=''
-if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+if [[ ( -t 1 || -n "${FORCE_COLOR:-}" ) && -z "${NO_COLOR:-}" ]]; then
   _c_green=$'\033[32m'; _c_red=$'\033[31m'; _c_dim=$'\033[2m'; _c_off=$'\033[0m'
 fi
 

@@ -34,8 +34,9 @@ Options:
 | --- | --- |
 | `-s SUITE` | which suite to run (default: the only one present) |
 | `-f PATTERN` | run only case files whose name contains `PATTERN` |
+| `-p N` | run up to N case files concurrently (default 1) |
 | `-v` | print every request and response |
-| `-x` | stop at the first failing assertion |
+| `-x` | stop at the first failing assertion (not with `-p`) |
 | `-r PATH` | write the HTML report here (default `SUITE/report.html`) |
 | `-j PATH` | write JUnit XML here (default `SUITE/junit.xml`) |
 | `-R` | skip both reports |
@@ -56,6 +57,47 @@ BASE_URL=https://staging.example.com API_PASS=hunter2 ./run.sh -s pharmacy-ops
 ```
 
 `run.sh` exits non-zero if anything failed, so it drops into CI unchanged.
+
+
+### Running case files concurrently
+
+Case files share no data. Each one builds its own fixtures from values that
+lib/gen.sh makes unique per run, so `-p N` can run N of them at once:
+
+```bash
+./run.sh -p 8
+```
+
+On this suite that takes the wall clock from about 72s to about 12s, which is
+roughly the floor: the longest single case file bounds it, so raising `-p`
+past the number of case files buys nothing.
+
+Assertions are written so that concurrency cannot change their outcome --
+anything counting rows filters on this run's own fixtures rather than on the
+whole collection. A new assertion must do the same, because the database also
+holds seed data and every previous run's rows. Each case writes its own event
+log and `run.sh` concatenates them in suite order afterwards, so the report
+and the JUnit XML come out identical either way.
+
+`-x` stops at the first failing assertion and so cannot be combined with `-p`:
+case files already in flight would run to completion regardless.
+
+### The progress display
+
+Attached to a terminal, a run draws one bar per case file in place of the
+per-assertion lines, and afterwards prints the full transcript of whichever
+cases failed -- the one-line failure summary does not carry the request and
+response that explain it.
+
+A bar is drawn against the number of assertions that case made last time,
+kept in `SUITE/.assert-counts` (untracked). The number is not knowable up
+front, since cases loop over collections and `-f` changes the set, so the
+first run of a case shows a plain count and every run after it has a real
+denominator.
+
+Redirect stdout, as CI does, and the per-assertion lines come back with no
+escape sequences in them. `-v` and `NO_COLOR` also turn the display off, as
+does a terminal too short to hold the block without scrolling.
 
 ## Adding a suite
 

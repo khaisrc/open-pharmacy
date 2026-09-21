@@ -14,6 +14,7 @@ FILTER=""
 SUITE="${SUITE_NAME:-}"
 REPORT_PATH=""
 JUNIT_PATH=""
+JOBS=1
 
 usage() {
   cat <<'USAGE'
@@ -22,8 +23,9 @@ Usage: ./run.sh [options]
   -s SUITE     which suite to run (a directory with its own cases/) --
                default: the only such directory found, if there is one
   -f PATTERN   run only case files whose name contains PATTERN
+  -p N         run up to N case files concurrently (default 1)
   -v           print every request and response
-  -x           stop at the first failing assertion
+  -x           stop at the first failing assertion (not with -p)
   -r PATH      write the HTML report here (default SUITE/report.html)
   -j PATH      write JUnit XML here (default SUITE/junit.xml)
   -R           skip both reports
@@ -35,10 +37,17 @@ Environment:
   API_USER   default admin
   API_PASS   default admin
   SUITE_NAME same as -s
+  NO_COLOR   set to disable colour and the progress display
 
 Every run writes an HTML report next to the suite -- one section per case
 file, with the full request and response behind a disclosure on each
 assertion -- and a junit.xml beside it for CI.
+
+Case files share no data: each builds its own fixtures from run-scoped unique
+values, so -p can run them concurrently. Attached to a terminal, a run draws a
+progress bar per case file in place of the assertion lines, and prints the
+full transcript afterwards for whichever cases failed. Redirect stdout (as CI
+does) and the plain per-assertion output comes back.
 
 The suite creates records and never deletes them. Every value the API requires
 to be unique is generated per run, so it is safe to run repeatedly against the
@@ -47,10 +56,11 @@ USAGE
 }
 
 LIST_ONLY=0
-while getopts ":s:f:r:j:Rvxlh" opt; do
+while getopts ":s:f:p:r:j:Rvxlh" opt; do
   case "$opt" in
     s) SUITE="$OPTARG" ;;
     f) FILTER="$OPTARG" ;;
+    p) JOBS="$OPTARG" ;;
     r) REPORT_PATH="$OPTARG" ;;
     j) JUNIT_PATH="$OPTARG" ;;
     R) NO_REPORT=1 ;;
@@ -62,6 +72,19 @@ while getopts ":s:f:r:j:Rvxlh" opt; do
     :)  echo "option -$OPTARG needs a value" >&2; exit 2 ;;
   esac
 done
+
+case "$JOBS" in
+  ''|*[!0-9]*) echo "-p needs a positive whole number, not '${JOBS}'" >&2; exit 2 ;;
+esac
+[[ "$JOBS" -lt 1 ]] && { echo "-p needs at least 1" >&2; exit 2; }
+
+# -x stops the run at the first failure, which it cannot do once other case
+# files are already in flight: they would run to completion regardless, and
+# which of them had got how far would vary between runs.
+if [[ "$JOBS" -gt 1 && -n "${FAIL_FAST:-}" ]]; then
+  echo "-x and -p cannot be combined: a concurrent run cannot stop at the first failure" >&2
+  exit 2
+fi
 
 # --- suite selection -----------------------------------------------------
 
@@ -140,7 +163,15 @@ RESULT_DIR="$(mktemp -d -t apitestsuite)"
 EVENTS="$RESULT_DIR/events.jsonl"
 : > "$EVENTS"
 export RUN_ID RESULT_DIR BASE_URL API_USER API_PASS
-trap 'rm -rf "$RESULT_DIR"' EXIT
+
+# The cursor is hidden while the progress display runs, so it has to come back
+# on every exit path, not just the clean one.
+cleanup() {
+  [[ "${CURSOR_HIDDEN:-0}" -eq 1 ]] && printf '\033[?25h'
+  rm -rf "$RESULT_DIR"
+}
+CURSOR_HIDDEN=0
+trap cleanup EXIT
 
 echo "${c_bold}${SUITE} API suite${c_off}  ${c_dim}${BASE_URL}  run ${RUN_ID}${c_off}"
 
@@ -156,14 +187,179 @@ if [[ ${#files[@]} -eq 0 ]]; then
   exit 2
 fi
 
-aborted=0
-for f in "${files[@]}"; do
-  echo
-  echo "${c_bold}$(basename "$f" .sh)${c_off}"
-  bash "$f"
-  rc=$?
-  if [[ $rc -ne 0 && -n "${FAIL_FAST:-}" ]]; then aborted=1; break; fi
+# The widest case name, so the bars line up in a column.
+NAME_W=0
+for case_path in "${files[@]}"; do
+  n="$(basename "$case_path" .sh)"
+  [[ ${#n} -gt $NAME_W ]] && NAME_W=${#n}
 done
+
+# --- progress display --------------------------------------------------------
+#
+# Drawn only on a terminal. CI redirects stdout, where cursor-movement escapes
+# are worse than the lines they replace, and -v wants the request/response
+# stream the display would be fighting for the screen.
+#
+# The bar for a case is drawn against how many assertions that case made last
+# time, recorded in .assert-counts. The count is not knowable up front -- cases
+# loop over collections, and -f changes the set -- so the first run of a case
+# shows a count with no bar, and every run after that has a real denominator.
+
+BASELINE="$SUITE_PATH/.assert-counts"
+PROGRESS=0
+if [[ -t 1 && -z "${NO_COLOR:-}" && -z "${VERBOSE:-}" ]]; then
+  PROGRESS=1
+  PROGRESS_LINES=$(( ${#files[@]} + 3 ))
+  term_lines="$(tput lines 2>/dev/null || echo 24)"
+  # Redrawing by moving the cursor up assumes the block never scrolled off.
+  [[ "$term_lines" -lt $(( PROGRESS_LINES + 4 )) ]] && PROGRESS=0
+fi
+
+# Case output goes to a file unless it can stream straight to the terminal:
+# concurrent cases would interleave, and the progress display needs the screen.
+BUFFERED=1
+[[ "$JOBS" -eq 1 && $PROGRESS -eq 0 ]] && BUFFERED=0
+# lib/http.sh colours its output on -t 1, which a buffered case never sees.
+[[ $BUFFERED -eq 1 && -t 1 && -z "${NO_COLOR:-}" ]] && export FORCE_COLOR=1
+
+BAR_W=20
+term_cols="$(tput cols 2>/dev/null || echo 80)"
+[[ $(( NAME_W + BAR_W + 22 )) -gt "$term_cols" ]] && BAR_W=10
+
+_expected() { # _expected CASE -- assertions it made last run, 0 if unknown
+  [[ -f "$BASELINE" ]] || { echo 0; return; }
+  awk -F'\t' -v c="$1" '$1 == c { print $2; found = 1 } END { if (!found) print 0 }' \
+    "$BASELINE" 2>/dev/null || echo 0
+}
+
+_bar() { # _bar DONE TOTAL WIDTH
+  local done="$1" total="$2" width="$3" filled i out=""
+  if [[ "$total" -le 0 ]]; then filled=0; else filled=$(( done * width / total )); fi
+  [[ $filled -gt $width ]] && filled=$width
+  [[ $filled -lt 0 ]] && filled=0
+  for (( i = 0; i < width; i++ )); do
+    if [[ $i -lt $filled ]]; then out+="#"; else out+="-"; fi
+  done
+  printf '%s' "$out"
+}
+
+# PASS/FAIL tallies for one case, read straight from its event log. grep on a
+# file a case is still appending to is safe: a torn final line only undercounts
+# by one, for one frame.
+_tally() { # _tally EVENTFILE PATTERN
+  local n
+  [[ -f "$1" ]] || { echo 0; return; }
+  n="$(grep -c "$2" "$1" 2>/dev/null | tr -dc '0-9')"
+  echo "${n:-0}"
+}
+
+_draw() { # _draw [FIRST] -- prints exactly $PROGRESS_LINES lines
+  local first="${1:-0}" case_file name ev passed failed expect done_files=0 tp=0 tf=0 el mins secs
+  [[ "$first" -eq 1 ]] || printf '\033[%dA' "$PROGRESS_LINES"
+  printf '\033[2K\n'
+  for case_file in "${files[@]}"; do
+    name="$(basename "$case_file" .sh)"
+    ev="$RESULT_DIR/events.${name}.jsonl"
+    passed="$(_tally "$ev" '"outcome":"PASS"')"
+    failed="$(_tally "$ev" '"outcome":"FAIL"')"
+    expect="$(_expected "$name")"
+    tp=$(( tp + passed )); tf=$(( tf + failed ))
+    printf '\033[2K  %-*s ' "$NAME_W" "$name"
+    if [[ -f "$RESULT_DIR/done.${name}" ]]; then
+      done_files=$(( done_files + 1 ))
+      if [[ "$failed" -gt 0 ]]; then
+        printf '%s%s%s  %s%d failed%s\n' \
+          "$c_red" "$(_bar 1 1 "$BAR_W")" "$c_off" "$c_red" "$failed" "$c_off"
+      else
+        printf '%s%s%s  %d ok\n' "$c_green" "$(_bar 1 1 "$BAR_W")" "$c_off" "$passed"
+      fi
+    elif [[ -f "$ev" ]]; then
+      printf '%s  %d' "$(_bar $(( passed + failed )) "$expect" "$BAR_W")" \
+        "$(( passed + failed ))"
+      [[ "$expect" -gt 0 ]] && printf '/%d' "$expect"
+      printf '\n'
+    else
+      printf '%s%s  %spending%s\n' "$c_dim" "$(_bar 0 1 "$BAR_W")" "$c_dim" "$c_off"
+    fi
+  done
+  el=$(( $(date +%s) - started )); mins=$(( el / 60 )); secs=$(( el % 60 ))
+  printf '\033[2K  %s\n' "$(_bar 0 1 $(( NAME_W + BAR_W + 18 )) | tr '-' '_')"
+  printf '\033[2K  %s%d/%d files%s   %d passed  %d failed   %d:%02d\n' \
+    "$c_bold" "$done_files" "${#files[@]}" "$c_off" "$tp" "$tf" "$mins" "$secs"
+}
+
+run_case() { # run to a per-case buffer, then mark it finished
+  local f="$1" name; name="$(basename "$f" .sh)"
+  { echo; echo "${c_bold}${name}${c_off}"; bash "$f"; } > "$RESULT_DIR/out.${name}" 2>&1
+  local rc=$?
+  : > "$RESULT_DIR/done.${name}"
+  return $rc
+}
+
+aborted=0
+
+# $case_path, not $f: _draw walks "${files[@]}" too, and a loop variable it
+# shared with the code below would be left pointing at the last case file on
+# every return -- dispatching the same case repeatedly into one event log.
+if [[ $BUFFERED -eq 0 ]]; then
+  # One case at a time, straight to the terminal: the original behaviour, and
+  # the only mode in which -x can stop the run where it failed.
+  for case_path in "${files[@]}"; do
+    echo
+    echo "${c_bold}$(basename "$case_path" .sh)${c_off}"
+    bash "$case_path"
+    rc=$?
+    if [[ $rc -ne 0 && -n "${FAIL_FAST:-}" ]]; then aborted=1; break; fi
+  done
+else
+  if [[ $PROGRESS -eq 1 ]]; then printf '\033[?25l'; CURSOR_HIDDEN=1; _draw 1; fi
+  # Even at one worker the case runs in the background, so the poll below can
+  # redraw while it works: waiting on it in the foreground would leave the bar
+  # frozen until the whole case finished. bash 3.2 has no `wait -n`, so the
+  # worker count is held by polling the job table, which doubles as the
+  # display's frame clock.
+  for case_path in "${files[@]}"; do
+    while [[ "$(jobs -rp | wc -l | tr -d ' ')" -ge "$JOBS" ]]; do
+      [[ $PROGRESS -eq 1 ]] && _draw
+      sleep 0.1
+    done
+    run_case "$case_path" &
+  done
+  while [[ "$(jobs -rp | wc -l | tr -d ' ')" -gt 0 ]]; do
+    [[ $PROGRESS -eq 1 ]] && _draw
+    sleep 0.1
+  done
+  wait
+  if [[ $PROGRESS -eq 1 ]]; then _draw; printf '\033[?25h'; CURSOR_HIDDEN=0; fi
+fi
+
+# --- gather the event logs ---------------------------------------------------
+#
+# In case order rather than completion order: bin/report.py groups by first
+# appearance, so this is what puts the report's sections back in suite order
+# after a concurrent run.
+for case_path in "${files[@]}"; do
+  ev="$RESULT_DIR/events.$(basename "$case_path" .sh).jsonl"
+  [[ -f "$ev" ]] && cat "$ev" >> "$EVENTS"
+done
+
+# --- the transcript ----------------------------------------------------------
+#
+# The progress display replaced the per-assertion lines, so print back the full
+# output of any case that failed -- the assertion text alone does not carry the
+# request and response that explain it. Without the display, nothing was shown
+# live, so print everything.
+if [[ $BUFFERED -eq 1 ]]; then
+  for case_path in "${files[@]}"; do
+    name="$(basename "$case_path" .sh)"
+    out="$RESULT_DIR/out.${name}"
+    [[ -f "$out" ]] || continue
+    if [[ $PROGRESS -eq 0 ]] || grep -q '"outcome":"FAIL"' \
+         "$RESULT_DIR/events.${name}.jsonl" 2>/dev/null; then
+      cat "$out"
+    fi
+  done
+fi
 
 # --- report ------------------------------------------------------------------
 
@@ -172,6 +368,22 @@ passed="$(grep -c '"outcome":"PASS"' "$EVENTS" 2>/dev/null || true)"
 failed="$(grep -c '"outcome":"FAIL"' "$EVENTS" 2>/dev/null || true)"
 passed="$(echo "${passed:-0}" | tr -dc '0-9')"; passed="${passed:-0}"
 failed="$(echo "${failed:-0}" | tr -dc '0-9')"; failed="${failed:-0}"
+
+# What the next run's bars measure against. Merged, not overwritten, so a
+# filtered run only updates the cases it actually ran.
+if [[ $aborted -eq 0 ]]; then
+  jq -r 'select(.t == "assertion") | .case' "$EVENTS" 2>/dev/null | sort | uniq -c |
+    awk '{ printf "%s\t%s\n", $2, $1 }' > "$RESULT_DIR/counts.new"
+  if [[ -s "$RESULT_DIR/counts.new" ]]; then
+    if [[ -f "$BASELINE" ]]; then
+      awk -F'\t' 'NR == FNR { seen[$1] = 1; print; next } !($1 in seen)' \
+        "$RESULT_DIR/counts.new" "$BASELINE" | sort > "$RESULT_DIR/counts.merged"
+    else
+      sort "$RESULT_DIR/counts.new" > "$RESULT_DIR/counts.merged"
+    fi
+    mv "$RESULT_DIR/counts.merged" "$BASELINE" 2>/dev/null || true
+  fi
+fi
 
 echo
 if [[ "${failed:-0}" -gt 0 ]]; then
