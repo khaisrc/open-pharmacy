@@ -22,6 +22,8 @@ RUN useradd --create-home --uid 1000 app && chown -R app:app /app /opt/venv /opt
 USER app
 
 EXPOSE 8000
-ENTRYPOINT ["/app/scripts/entrypoint.sh"]
 
+# No entrypoint: the image never migrates on start. Migrations are a separate
+# one-shot step (the `migrate` Compose service locally; a pre-deploy job in
+# uat and prod), so N replicas starting together never race on the same DDL.
 CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]

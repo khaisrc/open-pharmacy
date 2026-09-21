@@ -20,9 +20,13 @@ curl -u admin:admin http://localhost:8000/api/v1/prescriptions/
 open http://localhost:8000/api/v1/docs/
 ```
 
-**Port already in use?** The published port comes from `WEB_PORT` in
-`.env.local`. Change it there; nothing in the code needs touching. The
-container always listens on 8000 internally.
+**Port already in use?** The published port is `WEB_PORT`, read from the
+shell (`.env.local` cannot set it: Compose expands the port mapping before it
+reads any `env_file`). The container always listens on 8000 internally.
+
+```bash
+WEB_PORT=9000 docker compose up
+```
 
 ## Everything runs in the container
 
@@ -44,8 +48,15 @@ docker compose run --rm web python manage.py spectacular --fail-on-warn
 docker compose exec db psql -U pharmacy open_pharmacy
 ```
 
-`docker compose run --rm web …` starts the database first and removes the
-one-off container afterwards, so none of these need anything running already.
+`docker compose run --rm web …` starts the database first, runs the one-shot
+`migrate` service, and removes the one-off container afterwards, so none of
+these need anything running already.
+
+**Migrations never run on server start.** The image has no entrypoint that
+migrates; locally the `migrate` Compose service applies them once per `up`,
+and web waits for it. In uat and prod, run `python manage.py migrate --noinput`
+as a one-shot pre-deploy job before the new replicas start. Several gunicorn
+replicas migrating on boot would race each other on the same DDL.
 
 ## One database engine everywhere
 

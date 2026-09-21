@@ -18,9 +18,9 @@ jobs:
 
       # Compose is what a developer runs, so CI runs the same thing: one
       # definition of the environment, and the image that ships is the image
-      # the tests ran in. `run` starts the db service and waits on its
-      # healthcheck; the entrypoint only migrates and seeds for the server, so
-      # pytest gets a clean database and builds its own.
+      # the tests ran in. `run` starts the db service, waits on its healthcheck
+      # and runs the one-shot migrate service; pytest still builds and tears
+      # down its own test database.
       - name: Build the image
         run: docker compose build web
 
