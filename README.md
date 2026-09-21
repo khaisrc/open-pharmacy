@@ -1,107 +1,218 @@
 # open-pharmacy
 
-A REST API over the pharmacy domain — prescriptions, and the patients,
-prescribers, medications, pharmacies and addresses they reference.
+A REST API for one pharmacy's prescriptions and the records they reference:
+patients, prescribers, medications, pharmacies, their dispensing locations and
+addresses. Django + Django REST Framework on PostgreSQL 18, packaged as a single
+container.
 
 ## Quickstart
+
+The only prerequisite is Docker with Compose v2. No Python, no PostgreSQL on the
+host.
 
 ```bash
 git clone <repo> && cd open-pharmacy
 docker compose up
 ```
 
-That is the whole procedure. The only prerequisite is **Docker** with Compose
-v2 — no Python, no `uv` and no PostgreSQL on the host. Compose starts
-PostgreSQL 18, builds the image, migrates, seeds a superuser plus demo data,
-and serves the API.
+That starts PostgreSQL, builds the image, applies migrations, seeds a superuser
+(`admin` / `admin`) plus demo data, and serves the API on port 8000.
 
 ```bash
 curl -u admin:admin http://localhost:8000/api/v1/prescriptions/
-open http://localhost:8000/api/v1/docs/
+open http://localhost:8000/api/v1/docs/          # Swagger UI
 ```
 
-**Port already in use?** The published port is `WEB_PORT`, read from the
-shell (`.env.local` cannot set it: Compose expands the port mapping before it
-reads any `env_file`). The container always listens on 8000 internally.
+Port 8000 taken? Set `WEB_PORT` in the shell (Compose reads the port mapping
+before any env file):
 
 ```bash
 WEB_PORT=9000 docker compose up
 ```
 
-## Everything runs in the container
+## The API
 
-There is no interpreter, no dependency set and no reachable database on the
-host, so every command goes through Compose:
+Everything is under `/api/v1/`. The OpenAPI schema is at `/api/v1/schema/`,
+Swagger UI at `/api/v1/docs/`, ReDoc at `/api/v1/redoc/`.
+
+### Authentication
+
+HTTP Basic against Django's user table. Every endpoint requires it except
+`/api/v1/health/` and the docs. There is **no authorization yet**: any
+authenticated user can read and write any record, including patient PHI. The
+JWT and role design that replaces this is in `plans/auth/plan.md`.
+
+### Resources
+
+| Path | What it is | Notes |
+|---|---|---|
+| `/prescriptions/` | A medication order for a patient | `fill/` and `cancel/` actions; see lifecycle below |
+| `/patients/` | Who a prescription is written for | `{id}/prescriptions/` |
+| `/prescribers/` | Who wrote it, keyed by NPI | `{id}/prescriptions/` |
+| `/medications/` | What it names, keyed by NDC | NDC is normalized to 11 digits on write |
+| `/pharmacies/` | The organization, independent or chain | `{id}/locations/`; `location_count` is computed |
+| `/pharmacy-locations/` | A dispensing site, keyed by NCPDP ID | `{id}/prescriptions/` |
+| `/addresses/` | Postal addresses the records above share | |
+
+All resources support `GET` (list and detail), `POST`, `PATCH`, `PUT` and
+`DELETE`. Writes take flat ids (`patient_id`, `address_id`); reads return the
+nested object, so rendering a prescription is one request.
+
+`DELETE` is a soft delete: the row stays in the database, leaves the API, and
+its unique identifier (NPI, NDC, NCPDP ID) becomes reusable. A delete that
+would orphan live records is refused with a 409.
+
+### Prescription lifecycle
+
+A prescription starts `active`. The table is the complete set of transitions:
+
+| From | To | How |
+|---|---|---|
+| `active` | `on_hold` | `PATCH {"status": "on_hold"}` |
+| `on_hold` | `active` | `PATCH {"status": "active"}` |
+| `active` | `completed` | `POST {id}/fill/` uses the last authorized fill |
+| `active` | `cancelled` | `POST {id}/cancel/` |
+| `active` | `expired` | recorded when a fill, cancel or update finds `expires_at` in the past |
+
+`completed`, `cancelled` and `expired` are terminal. Nothing leaves them, and no
+field of a terminal prescription can be changed (409 `already_terminal`).
+Setting a terminal status through `PATCH` is a 400 that names the endpoint
+which owns that transition.
+
+`POST {id}/fill/` increments `fills_used`, sets `completed` when
+`fills_remaining` hits zero, and is a 409 when the prescription is not active,
+has no fills left, or has expired. Fills and cancels lock the row, so two
+concurrent requests cannot both succeed.
+
+`pharmacy_location_id` is optional on create. When omitted, the prescription is
+routed to the **home location**, the store this deployment serves, identified
+by `HOME_PHARMACY_LOCATION_NCPDP_ID`. The default points at the Acme Pharmacy
+row that migration 0003 seeds into every database.
+
+### Lists
+
+Every list is paginated: `?page=` and `?page_size=` (default 25, max 100), with
+`count`, `next`, `previous` and `results` in the body.
+
+| Resource | Filters | `?search=` | `?ordering=` |
+|---|---|---|---|
+| prescriptions | `patient`, `prescriber`, `medication`, `pharmacy_location`, `pharmacy`, `status`, `written_after`, `written_before` | medication name, patient last name | `written_at`, `created_at` |
+| patients | `last_name`, `dob`, `sms_opt_in`, `gender` | first and last name | `created_at`, `last_name`, `dob` |
+| prescribers | `npi`, `practitioner_type` | name, NPI | `created_at`, `last_name` |
+| medications | `form` | | |
+| pharmacies | `name` | name, legal name | `created_at`, `name` |
+| pharmacy-locations | `pharmacy`, `location_type`, `is_24_hour`, `ncpdp_id`, `state`, `city`, `postal_code` | store number, NCPDP ID, pharmacy name | `created_at`, `store_number` |
+| addresses | `state`, `city`, `postal_code` | | |
+
+The nested routes (`/patients/{id}/prescriptions/` and so on) are the child
+list with one filter pinned, so the same parameters work there. Prefix an
+ordering field with `-` for descending.
+
+### Errors
+
+Every error has one shape:
+
+```json
+{
+  "error": {
+    "code": "duplicate_npi",
+    "message": "A live prescriber with this NPI already exists.",
+    "details": {"field": "npi", "npi": "1234567893", "existing_id": "…"}
+  }
+}
+```
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `validation_error` | `details` maps each field to its errors |
+| 401 | `not_authenticated` | missing or bad credentials |
+| 404 | `not_found` | |
+| 409 | `duplicate_<field>` | a live record already holds that NPI, NDC, NCPDP ID or store number |
+| 409 | `referenced` | delete refused; `details.referenced_by` counts the live references |
+| 409 | `not_active`, `no_fills_remaining`, `expired` | fill refused |
+| 409 | `already_terminal` | cancel or update refused; `details.status` is the current status |
+| 429 | `throttled` | 100/min anonymous, 1000/min authenticated by default |
+
+Every response carries an `X-Request-ID` header, echoed from the request if
+sent, and every log line for that request includes it.
+
+## Development
+
+There is no interpreter or database on the host, so every command runs through
+Compose. `docker compose run --rm web …` starts the database, runs the one-shot
+`migrate` service, then runs the command in a throwaway container.
 
 ```bash
-docker compose up                       # API on :8000, Swagger at /api/v1/docs/
+docker compose up                       # serve, with migrations and seed
 docker compose up --build               # after changing dependencies
-docker compose down                     # stop; add -v to drop the database volume
+docker compose down -v                  # stop and drop the database
 docker compose logs -f web
 
 docker compose run --rm web pytest
+docker compose run --rm web pytest pharmacy/tests/test_prescriptions_api.py -k fill
 docker compose run --rm web ruff check .
 docker compose run --rm web ruff format .
 docker compose run --rm web python manage.py makemigrations
-docker compose run --rm web python manage.py seed_local
 docker compose run --rm web python manage.py spectacular --fail-on-warn
 docker compose exec db psql -U pharmacy open_pharmacy
 ```
 
-`docker compose run --rm web …` starts the database first, runs the one-shot
-`migrate` service, and removes the one-off container afterwards, so none of
-these need anything running already.
+The test suite runs against PostgreSQL 18, the same engine as production, in a
+database pytest creates and drops. CI (`.github/workflows/test.yml`) runs the
+suite, ruff, and `makemigrations --check` through the same Compose file.
 
-**Migrations never run on server start.** The image has no entrypoint that
-migrates; locally the `migrate` Compose service applies them once per `up`,
-and web waits for it. In uat and prod, run `python manage.py migrate --noinput`
-as a one-shot pre-deploy job before the new replicas start. Several gunicorn
-replicas migrating on boot would race each other on the same DDL.
-
-## One database engine everywhere
-
-**PostgreSQL 18 backs every tier, including local development and the test
-suite.** The engine the tests exercise is the engine that runs in production,
-so the migration path, collation and ordering behaviour, and constraint timing
-are verified by an ordinary local run rather than deferred to a deployment.
-
-The backend is selected entirely by `DATABASE_URL`. There is no second settings
-module, no vendor branch in the code and no test-only config file.
-
-| Tier | Database | Secrets from |
-|---|---|---|
-| local | the `db` Compose service | `.env.local`, committed |
-| uat / prod | a managed PostgreSQL | the process environment |
-
-`.env.local` is committed deliberately so a fresh clone needs no setup. Every
-value in it is a throwaway that is valid nowhere else. `.env.example` documents
-the variable contract uat and prod must satisfy.
-
-## Authentication
-
-HTTP Basic against Django's `auth.User`, with `IsAuthenticated` globally.
-`/api/v1/health/`, `/schema/`, `/docs/` and `/redoc/` are open. There is **no
-authorization** — any authenticated caller can read and write any record,
-including patient PHI. That is a deliberate interim state; JWT and the
-authorization model are scoped in `plans/auth/plan.md`.
-
-Swagger's **Authorize** button works with the seeded `admin` / `admin`.
-
-## Layout
-
-The whole domain lives in one Django app, `pharmacy`. Models, serializers and
-views are packages with one module per resource rather than single large files.
+### Layout
 
 ```
-config/settings/{base,local,uat,prod}.py   base never reads .env.local
-pharmacy/models/        one module per model, re-exported from __init__
-pharmacy/serializers/   same split
-pharmacy/views/         same split, plus health
+config/settings/     base.py, then local.py / uat.py / prod.py chosen by DJANGO_ENV
+pharmacy/models/     one module per model; soft delete and UUID ids in base.py
+pharmacy/serializers/  same split; duplicate checks in base.py
+pharmacy/views/      same split; nested routes and delete guards in base.py
+pharmacy/filters.py  the list filters above
 pharmacy/validators.py  NPI check digit, NDC and NCPDP normalization
-pharmacy/exceptions.py  Conflict (409) and the single error envelope
+pharmacy/exceptions.py  the error envelope and every 409
+pharmacy/management/commands/seed_local.py  the superuser and demo data
+plans/               design documents; the code is the source of truth where they differ
 ```
 
-Nothing is ever hard-deleted: `DELETE` soft-deletes and stays recoverable via
-`all_objects` / `undelete()`. Unique constraints are partial, scoped to live
-rows, so a closed store's NCPDP ID or a discontinued product's NDC can be
-reused.
+Identifiers are validated and normalized on the way in: an NPI must carry a
+valid check digit, an NDC in any segmented form is stored as 11 digits, an NCPDP
+ID as 7. Unique constraints are partial and cover live rows only, which is what
+lets a soft-deleted record's identifier be reused.
+
+## Configuration and deployment
+
+`DJANGO_ENV` selects the settings module: `local` (default), `uat` or `prod`.
+`local` reads the committed `.env.local`, whose every value is a throwaway
+valid nowhere else. `uat` and `prod` read the process environment only and
+refuse to start with anything missing; `prod` additionally refuses the local
+`SECRET_KEY`, `DEBUG=true` and a wildcard `ALLOWED_HOSTS`.
+
+| Variable | Required outside local | Purpose |
+|---|---|---|
+| `SECRET_KEY` | yes | |
+| `DATABASE_URL` | yes | `postgres://user:password@host:5432/dbname` |
+| `ALLOWED_HOSTS` | yes | comma separated |
+| `DEBUG` | | must be false |
+| `CORS_ALLOWED_ORIGINS` | | comma separated |
+| `THROTTLE_ANON`, `THROTTLE_USER` | | e.g. `100/min` |
+| `HOME_PHARMACY_LOCATION_NCPDP_ID` | | the store this deployment serves; default `4417829` |
+| `SECRETS_FILE` | | optional env file a secrets sidecar writes, read before the environment |
+
+`.env.example` lists the same contract without values.
+
+**Migrations are a separate step, never part of server start.** Locally the
+`migrate` Compose service runs them once per `up`. In uat and prod, run
+`python manage.py migrate --noinput` as a one-shot job before starting the new
+replicas; replicas that migrate on boot race each other on the same DDL.
+
+The image's default command is `runserver` for local use. Deployed tiers
+override it with gunicorn, which is installed:
+
+```bash
+gunicorn config.wsgi --bind 0.0.0.0:8000
+```
+
+Both deployed tiers redirect to HTTPS, since Basic Auth over plain HTTP would
+leak credentials. `GET /api/v1/health/` returns 200 with
+`{"status": "ok", "database": "ok"}`, or 503 when the database is unreachable.
