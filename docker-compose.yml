@@ -1,0 +1,47 @@
+services:
+  db:
+    image: postgres:18
+    # The same file web reads, so the credentials the server dials are the
+    # credentials the database was created with. (Compose's own ${...}
+    # interpolation never reads env_file, only the shell and a `.env`.)
+    env_file: .env.local
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      # $$ defers expansion to the container's shell, where env_file applies.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  # One-shot: runs the migrations and the local seed once per `up`, and web
+  # waits for it to finish. Keeping this out of the server's own start-up means
+  # a deployment with several replicas never has them racing to apply the same
+  # DDL; uat and prod run the same `migrate` as a pre-deploy job.
+  migrate:
+    build: .
+    env_file: .env.local
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: ["sh", "-c", "python manage.py migrate --noinput && python manage.py seed_local"]
+
+  web:
+    build: .
+    env_file: .env.local
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      # Interpolated by Compose from the shell, not from .env.local:
+      #   WEB_PORT=9000 docker compose up
+      - "${WEB_PORT:-8000}:8000"
+    volumes:
+      - .:/app
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+
+volumes:
+  pgdata:

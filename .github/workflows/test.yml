@@ -1,0 +1,58 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Compose is what a developer runs, so CI runs the same thing: one
+      # definition of the environment, and the image that ships is the image
+      # the tests ran in. `run` starts the db service, waits on its healthcheck
+      # and runs the one-shot migrate service; pytest still builds and tears
+      # down its own test database.
+      - name: Build the image
+        run: docker compose build web
+
+      - name: Run the test suite
+        run: docker compose run --rm -T web python -m pytest -q
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker compose build web
+
+      # --no-cache because /app is the bind-mounted checkout, which the
+      # runner owns as a different uid than the image's app user, so ruff
+      # cannot create .ruff_cache there. CI reuses no cache between runs anyway.
+      - name: ruff check
+        run: docker compose run --rm -T web ruff check --no-cache .
+
+      - name: ruff format
+        run: docker compose run --rm -T web ruff format --check --no-cache .
+
+      # A model edited without its migration passes every test and then fails
+      # on deploy, so the check belongs in CI rather than in review.
+      - name: Every model change has a migration
+        run: docker compose run --rm -T web python manage.py makemigrations --check --dry-run
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v
