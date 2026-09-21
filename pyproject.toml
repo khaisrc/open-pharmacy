@@ -1,0 +1,39 @@
+[project]
+name = "pharmacy-ops"
+version = "0.1.0"
+description = "REST API over the pharmacy domain"
+requires-python = ">=3.12"
+dependencies = [
+    "django>=6.1.1",
+    "djangorestframework>=3.18.1",
+    "drf-spectacular>=0.30.0",
+    "drf-spectacular-sidecar>=2026.9.1",
+    "psycopg[binary]>=3.3.5",
+    "django-filter>=26.1",
+    "django-safedelete>=1.5.0",
+    "django-environ>=0.14.0",
+    "django-cors-headers>=4.9.0",
+    "whitenoise>=6.12.0",
+    "gunicorn>=26.2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-django>=4.14.0",
+    "factory-boy>=3.3.3",
+    "ruff>=0.16.8",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = ["pharmacy/migrations"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "DJ", "C4"]
+ignore = ["B008"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.local"
+python_files = ["test_*.py"]
