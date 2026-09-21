@@ -25,6 +25,7 @@ class SoftDeleteModelViewSet(viewsets.ModelViewSet):
         if blocking:
             raise Conflict(
                 "Cannot delete a record that live records still reference.",
+                code="referenced",
                 details={"referenced_by": blocking},
             )
         try:
@@ -32,6 +33,7 @@ class SoftDeleteModelViewSet(viewsets.ModelViewSet):
         except ProtectedError as exc:
             raise Conflict(
                 "Cannot delete a record that other records still reference.",
+                code="referenced",
                 details={
                     "referenced_by": sorted(
                         {obj._meta.verbose_name for obj in exc.protected_objects}

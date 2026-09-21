@@ -55,6 +55,7 @@ class PrescriptionViewSet(SoftDeleteModelViewSet):
             prescription.save(update_fields=["status", "updated_at"])
             raise Conflict(
                 "This prescription expired and cannot be filled.",
+                code="expired",
                 details={
                     "status": prescription.status,
                     "expires_at": prescription.expires_at.isoformat(),
@@ -68,12 +69,14 @@ class PrescriptionViewSet(SoftDeleteModelViewSet):
                 raise Conflict(
                     f"Only an active prescription can be filled; this one is "
                     f"'{prescription.status}'.",
+                    code="not_active",
                     details={"status": prescription.status},
                 )
 
             if prescription.fills_remaining <= 0:
                 raise Conflict(
                     "Every authorized fill has already been used.",
+                    code="no_fills_remaining",
                     details={
                         "status": prescription.status,
                         "fills_authorized": prescription.fills_authorized,
@@ -104,6 +107,7 @@ class PrescriptionViewSet(SoftDeleteModelViewSet):
         if prescription.is_terminal:
             raise Conflict(
                 f"A '{prescription.status}' prescription cannot be cancelled.",
+                code="already_terminal",
                 details={"status": prescription.status},
             )
         prescription.status = PrescriptionStatus.CANCELLED
