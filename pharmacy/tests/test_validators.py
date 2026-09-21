@@ -48,6 +48,33 @@ class TestNDC:
             normalize_ndc(value)
 
 
+class TestOnlyASCIIDigitsCount:
+    """int() and str.isdigit() accept other scripts' digits, so a fullwidth NPI
+    would pass the check digit and be stored as a value the live-uniqueness
+    constraints never match against its ASCII twin."""
+
+    FULLWIDTH = str.maketrans("0123456789", "０１２３４５６７８９")
+
+    def test_npi(self):
+        with pytest.raises(ValidationError):
+            validate_npi("1234567893".translate(self.FULLWIDTH))
+
+    @pytest.mark.parametrize("value", ["00093505601", "0002-8215-01"])
+    def test_ndc(self, value):
+        with pytest.raises(ValidationError):
+            normalize_ndc(value.translate(self.FULLWIDTH))
+
+    def test_ncpdp(self):
+        with pytest.raises(ValidationError):
+            normalize_ncpdp("1417231".translate(self.FULLWIDTH))
+
+    def test_phone_and_postal_code(self):
+        with pytest.raises(ValidationError):
+            validate_e164("+15551234567".translate(self.FULLWIDTH))
+        with pytest.raises(ValidationError):
+            validate_postal_code("14850".translate(self.FULLWIDTH))
+
+
 class TestNCPDP:
     @pytest.mark.parametrize("raw", ["1417231", "141-7231", " 1417231 "])
     def test_strips_separators(self, raw):

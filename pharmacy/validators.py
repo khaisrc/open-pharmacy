@@ -9,8 +9,13 @@ import re
 
 from django.core.exceptions import ValidationError
 
-E164_RE = re.compile(r"^\+[1-9]\d{7,14}$")
-POSTAL_RE = re.compile(r"^\d{5}(-\d{4})?$")
+# [0-9] rather than \d throughout: \d and str.isdigit() also accept other
+# scripts' digits (fullwidth, Arabic-Indic, ...), which int() happily parses, so
+# a fullwidth NPI would pass the check digit and be stored as a distinct value
+# that the live-uniqueness constraints never match against its ASCII twin.
+E164_RE = re.compile(r"^\+[1-9][0-9]{7,14}$")
+POSTAL_RE = re.compile(r"^[0-9]{5}(-[0-9]{4})?$")
+DIGITS_RE = re.compile(r"[0-9]+")
 
 US_STATES = {
     "AL",
@@ -117,7 +122,7 @@ def validate_npi(value):
     a real one and propagates into claims.
     """
     value = value or ""
-    if not re.fullmatch(r"\d{10}", value):
+    if not re.fullmatch(r"[0-9]{10}", value):
         raise ValidationError("NPI must be exactly 10 digits.", code="invalid_npi")
     if luhn_check_digit("80840" + value[:9]) != int(value[9]):
         raise ValidationError("NPI check digit is invalid.", code="invalid_npi_check_digit")
@@ -137,7 +142,7 @@ def normalize_ndc(value):
 
     if "-" in raw:
         segments = raw.split("-")
-        if len(segments) != 3 or not all(s.isdigit() for s in segments):
+        if len(segments) != 3 or not all(DIGITS_RE.fullmatch(s) for s in segments):
             raise ValidationError(
                 "NDC must be three digit segments, for example 0002-8215-01.",
                 code="invalid_ndc",
@@ -154,7 +159,7 @@ def normalize_ndc(value):
             )
         return f"{labeler.zfill(5)}{product.zfill(4)}{package.zfill(2)}"
 
-    if not raw.isdigit():
+    if not DIGITS_RE.fullmatch(raw):
         raise ValidationError("NDC must contain only digits and dashes.", code="invalid_ndc")
     if len(raw) == 11:
         return raw
@@ -172,7 +177,7 @@ def normalize_ncpdp(value):
     not been verified against the specification and would reject valid IDs.
     """
     raw = re.sub(r"[\s-]", "", (value or "").strip())
-    if not re.fullmatch(r"\d{7}", raw):
+    if not re.fullmatch(r"[0-9]{7}", raw):
         raise ValidationError("NCPDP ID must be 7 digits.", code="invalid_ncpdp")
     return raw
 
