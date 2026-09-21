@@ -3,7 +3,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from pharmacy.models import Medication, Patient, Prescriber, Prescription
+from pharmacy.models import Medication, Patient, Prescriber, Prescription, Staff
 
 from .factories import (
     MedicationFactory,
@@ -11,6 +11,7 @@ from .factories import (
     PharmacyLocationFactory,
     PrescriberFactory,
     PrescriptionFactory,
+    StaffFactory,
     make_npi,
 )
 
@@ -80,6 +81,30 @@ class TestPartialUniqueness:
         PharmacyLocationFactory(pharmacy=pharmacy, store_number="")
         PharmacyLocationFactory(pharmacy=pharmacy, store_number="")
 
+    def test_live_staff_registration_is_unique_per_state(self):
+        StaffFactory(registration_state="NY", registration_number="RPH.1")
+        StaffFactory(registration_state="CA", registration_number="RPH.1")
+        with pytest.raises(IntegrityError):
+            with transaction.atomic():
+                StaffFactory(registration_state="NY", registration_number="RPH.1")
+
+    def test_deleted_staff_registration_can_be_reused(self):
+        gone = StaffFactory(registration_state="NY", registration_number="RPH.1")
+        gone.delete()
+        StaffFactory(registration_state="NY", registration_number="RPH.1")
+        assert Staff.all_objects.filter(registration_number="RPH.1").count() == 2
+
+    def test_unregistered_staff_never_collide(self):
+        for _ in range(2):
+            StaffFactory(role="technician", registration_state="", registration_number="")
+
+    def test_live_staff_npi_is_unique(self):
+        npi = make_npi(4343)
+        StaffFactory(npi=npi)
+        with pytest.raises(IntegrityError):
+            with transaction.atomic():
+                StaffFactory(npi=npi)
+
 
 class TestSoftDelete:
     def test_delete_hides_but_keeps_the_row(self):
@@ -113,3 +138,7 @@ class TestNormalizationOnSave:
         address.save()
         address.refresh_from_db()
         assert address.state == "NY"
+
+    def test_staff_registration_uppercased_on_save(self):
+        staff = StaffFactory(registration_state="ny", registration_number=" rph.12 ")
+        assert (staff.registration_state, staff.registration_number) == ("NY", "RPH.12")

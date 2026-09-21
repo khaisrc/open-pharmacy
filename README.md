@@ -69,13 +69,45 @@ JWT and role design that replaces this is in `plans/auth/plan.md`.
 | `/patients/` | Who a prescription is written for | `{id}/prescriptions/` |
 | `/prescribers/` | Who wrote it, keyed by NPI | `{id}/prescriptions/` |
 | `/medications/` | What it names, keyed by NDC | NDC is normalized to 11 digits on write |
-| `/pharmacies/` | The organization, independent or chain | `{id}/locations/`; `location_count` is computed |
-| `/pharmacy-locations/` | A dispensing site, keyed by NCPDP ID | `{id}/prescriptions/` |
+| `/pharmacies/` | The organization, independent or chain | `location_count` is computed |
+| `/pharmacies/{id}/locations/` | A dispensing site, keyed by NCPDP ID | `{id}/prescriptions/`; carries the pharmacist-in-charge |
+| `/pharmacies/{id}/staff/` | A credentialed person the pharmacy employs | pharmacist, certified technician, technician or intern; keyed by state registration |
 | `/addresses/` | Postal addresses the records above share | |
 
 All resources support `GET` (list and detail), `POST`, `PATCH`, `PUT` and
 `DELETE`. Writes take flat ids (`patient_id`, `address_id`); reads return the
 nested object, so rendering a prescription is one request.
+
+Locations and staff are sub-resources of the pharmacy that owns them: the
+pharmacy comes from the path, never from the body, and a record cannot be
+moved to another pharmacy. An unknown pharmacy is a 404 on every nested
+route. Prescriptions still reference a location by flat `pharmacy_location_id`.
+
+### Staff
+
+A staff record is the domain identity of a person -- the name a state board
+can look up -- and is deliberately not a login. `role` is one of
+`pharmacist`, `certified_technician`, `technician` or `intern`. Two
+credentials are recorded separately because a board verifies one and a
+certifying body the other, and neither stands in for the other:
+
+- `registration_state` + `registration_number`: the state board registration,
+  both or neither, unique per state among live records. Required for a
+  pharmacist and a certified technician; optional for a technician or intern,
+  since not every state registers them.
+- `certification_body` (`PTCB` or `NHA`) + `certification_number`: the
+  national technician certification, both or neither. Required for a
+  certified technician; any role may hold one.
+
+`npi` is optional and validated like every other NPI. `is_active=false` is a
+person who has left or whose registration lapsed: the row stays, because
+records will still name them. `DELETE` is for a record that should never
+have existed.
+
+A location's `pharmacist_in_charge` is the board-registered designation for
+the site, kept for defaulting and validation. Designating one requires an
+active pharmacist employed by the same pharmacy; nothing revokes it on its
+own, and it says nothing about who was supervising at any particular moment.
 
 `DELETE` is a soft delete: the row stays in the database, leaves the API, and
 its unique identifier (NPI, NDC, NCPDP ID) becomes reusable. A delete that
@@ -120,12 +152,13 @@ Every list is paginated: `?page=` and `?page_size=` (default 25, max 100), with
 | prescribers | `npi`, `practitioner_type` | name, NPI | `created_at`, `last_name` |
 | medications | `form` | | |
 | pharmacies | `name` | name, legal name | `created_at`, `name` |
-| pharmacy-locations | `pharmacy`, `location_type`, `is_24_hour`, `ncpdp_id`, `state`, `city`, `postal_code` | store number, NCPDP ID, pharmacy name | `created_at`, `store_number` |
+| pharmacies/{id}/locations | `location_type`, `is_24_hour`, `ncpdp_id`, `state`, `city`, `postal_code` | store number, NCPDP ID | `created_at`, `store_number` |
+| pharmacies/{id}/staff | `role`, `is_active`, `registration_state`, `registration_number`, `certification_body`, `npi` | name, registration number, NPI | `created_at`, `last_name` |
 | addresses | `state`, `city`, `postal_code` | | |
 
-The nested routes (`/patients/{id}/prescriptions/` and so on) are the child
-list with one filter pinned, so the same parameters work there. Prefix an
-ordering field with `-` for descending.
+The nested prescription routes (`/patients/{id}/prescriptions/` and so on)
+are the prescription list with one filter pinned, so the same parameters
+work there. Prefix an ordering field with `-` for descending.
 
 ### Errors
 
@@ -146,8 +179,8 @@ Every error has one shape:
 | 400 | `validation_error` | `details` maps each field to its errors |
 | 401 | `not_authenticated` | missing or bad credentials |
 | 404 | `not_found` | |
-| 409 | `duplicate_<field>` | a live record already holds that NPI, NDC, NCPDP ID or store number |
-| 409 | `referenced` | delete refused; `details.referenced_by` counts the live references |
+| 409 | `duplicate_<field>` | a live record already holds that NPI, NDC, NCPDP ID, store number or state registration (`duplicate_registration_number`, with `details.registration_state`) |
+| 409 | `referenced` | delete refused; `details.referenced_by` counts the live references, including a location whose pharmacist-in-charge is being deleted |
 | 409 | `not_active`, `no_fills_remaining`, `expired` | fill refused |
 | 409 | `already_terminal` | cancel or update refused; `details.status` is the current status |
 | 429 | `throttled` | 100/min anonymous, 1000/min authenticated by default |

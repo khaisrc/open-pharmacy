@@ -6,6 +6,7 @@ from .pharmacy import PharmacyViewSet
 from .pharmacy_location import PharmacyLocationViewSet
 from .prescriber import PrescriberViewSet
 from .prescription import PrescriptionViewSet
+from .staff import StaffViewSet
 
 __all__ = [
     "AddressViewSet",
@@ -15,5 +16,6 @@ __all__ = [
     "PharmacyViewSet",
     "PrescriberViewSet",
     "PrescriptionViewSet",
+    "StaffViewSet",
     "health",
 ]

@@ -92,6 +92,19 @@ through `nested_list(PrescriptionViewSet, request, patient=...)` so the child's
 `select_related`, filterset, search, ordering and pagination stay defined once.
 Do not re-implement a child list on the parent.
 
+**Sub-resources are scoped by the URL.** Locations and staff live under
+`/pharmacies/{pharmacy_id}/` with full CRUD: `PharmacyScopedViewSet` resolves
+the parent (404 when unknown), narrows `get_queryset()` before any filter, and
+attaches it on create, so the serializer has no `pharmacy_id` field. The
+routes are laid out by `sub_resource()` in `pharmacy/urls.py`, not the router.
+A read-only child list (`nested_list`) and a sub-resource are different
+things; use the former when the child has its own top-level resource.
+
+**`is_active` is not soft delete.** An inactive staff member has left but
+stays resolvable because records name them; `DELETE` is for rows that should
+never have existed. `PharmacyLocation.pharmacist_in_charge` is the board
+designation, validated when set and never inferred from anything else.
+
 **Identifiers are normalized on the way in**, in `validators.py`: an NPI must
 carry a valid Luhn check digit, an NDC in any segmented form is stored as 11
 digits, an NCPDP ID as 7. ASCII digits only.

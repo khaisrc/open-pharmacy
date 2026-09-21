@@ -7,13 +7,16 @@ from drf_spectacular.generators import SchemaGenerator
 
 pytestmark = pytest.mark.django_db
 
+MISSING = "00000000-0000-4000-8000-000000000000"
+
 PROTECTED = [
     "/api/v1/prescriptions/",
     "/api/v1/patients/",
     "/api/v1/prescribers/",
     "/api/v1/medications/",
     "/api/v1/pharmacies/",
-    "/api/v1/pharmacy-locations/",
+    f"/api/v1/pharmacies/{MISSING}/locations/",
+    f"/api/v1/pharmacies/{MISSING}/staff/",
     "/api/v1/addresses/",
 ]
 OPEN = ["/api/v1/health/", "/api/v1/schema/", "/api/v1/docs/", "/api/v1/redoc/"]
@@ -45,11 +48,9 @@ class TestNotFound:
     handler cannot see it, so the conversion has to happen in ours or every
     404 reports the fallback code."""
 
-    MISSING = "00000000-0000-4000-8000-000000000000"
-
     @pytest.mark.parametrize("url", PROTECTED)
     def test_unknown_id_reports_not_found(self, api, url):
-        response = api.get(f"{url}{self.MISSING}/")
+        response = api.get(f"{url}{MISSING}/")
         assert response.status_code == 404
         assert response.data["error"]["code"] == "not_found"
 
@@ -85,10 +86,18 @@ class TestSchema:
             "Medications",
             "Pharmacies",
             "Pharmacy Locations",
+            "Staff",
             "Addresses",
             "System",
         ]
 
     def test_every_resource_is_present(self, schema):
         for path in PROTECTED + ["/api/v1/health/"]:
-            assert path in schema["paths"], f"{path} missing from the schema"
+            template = path.replace(MISSING, "{pharmacy_id}")
+            assert template in schema["paths"], f"{template} missing from the schema"
+
+    def test_locations_are_only_reachable_through_a_pharmacy(self, schema):
+        assert not [
+            path for path in schema["paths"] if path.startswith("/api/v1/pharmacy-locations")
+        ]
+        assert "/api/v1/pharmacies/{pharmacy_id}/locations/{id}/prescriptions/" in schema["paths"]

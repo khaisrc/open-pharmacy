@@ -8,6 +8,7 @@ from .models import (
     PharmacyLocation,
     Prescriber,
     Prescription,
+    Staff,
 )
 
 
@@ -58,6 +59,8 @@ class PharmacyFilter(filters.FilterSet):
 
 
 class PharmacyLocationFilter(filters.FilterSet):
+    """No `pharmacy` filter: the route under /pharmacies/{id}/ pins it."""
+
     state = filters.CharFilter(field_name="address__state", lookup_expr="iexact")
     city = filters.CharFilter(field_name="address__city", lookup_expr="iexact")
     postal_code = filters.CharFilter(field_name="address__postal_code")
@@ -65,11 +68,26 @@ class PharmacyLocationFilter(filters.FilterSet):
     class Meta:
         model = PharmacyLocation
         fields = [
-            "pharmacy",
             "location_type",
             "is_24_hour",
             "ncpdp_id",
             "state",
             "city",
             "postal_code",
+        ]
+
+
+class StaffFilter(filters.FilterSet):
+    registration_state = filters.CharFilter(lookup_expr="iexact")
+    registration_number = filters.CharFilter(lookup_expr="iexact")
+
+    class Meta:
+        model = Staff
+        fields = [
+            "role",
+            "is_active",
+            "registration_state",
+            "registration_number",
+            "certification_body",
+            "npi",
         ]

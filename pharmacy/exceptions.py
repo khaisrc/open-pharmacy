@@ -17,6 +17,8 @@ LIVE_UNIQUE_CONSTRAINTS = {
     "uniq_live_ncpdp": ("pharmacy location", "ncpdp_id", "NCPDP ID"),
     "uniq_live_location_npi": ("pharmacy location", "npi", "NPI"),
     "uniq_live_store_number_per_pharmacy": ("pharmacy location", "store_number", "store number"),
+    "uniq_live_staff_registration": ("staff member", "registration_number", "state registration"),
+    "uniq_live_staff_npi": ("staff member", "npi", "NPI"),
 }
 
 
@@ -32,7 +34,7 @@ class Conflict(APIException):
         self.details = details or {}
 
 
-def duplicate(record, field, label, value=None, existing=None):
+def duplicate(record, field, label, value=None, existing=None, extra=None):
     """The 409 for an identifier a live record already holds.
 
     Serializers raise it with the offending value and the existing row; the
@@ -43,6 +45,8 @@ def duplicate(record, field, label, value=None, existing=None):
     details = {"field": field}
     if value is not None:
         details[field] = value
+    if extra:
+        details.update(extra)
     if existing is not None:
         details["existing_id"] = str(existing.pk)
     return Conflict(

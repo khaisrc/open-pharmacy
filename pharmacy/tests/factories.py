@@ -10,6 +10,8 @@ from pharmacy.models import (
     Prescriber,
     Prescription,
     PrescriptionStatus,
+    Staff,
+    StaffRole,
 )
 from pharmacy.validators import luhn_check_digit
 
@@ -78,6 +80,21 @@ class PharmacyLocationFactory(factory.django.DjangoModelFactory):
     ncpdp_id = factory.Sequence(lambda n: f"{1000000 + n}")
     phone_number = "+15559876543"
     address = factory.SubFactory(AddressFactory)
+
+
+class StaffFactory(factory.django.DjangoModelFactory):
+    """A registered pharmacist by default, the role every rule allows; pass
+    role= and blank the registration for the other shapes."""
+
+    class Meta:
+        model = Staff
+
+    first_name = factory.Sequence(lambda n: f"Staff{n}")
+    last_name = "Member"
+    role = StaffRole.PHARMACIST
+    registration_state = "OR"
+    registration_number = factory.Sequence(lambda n: f"RPH.{n:06d}")
+    pharmacy = factory.SubFactory(PharmacyFactory)
 
 
 class PrescriptionFactory(factory.django.DjangoModelFactory):

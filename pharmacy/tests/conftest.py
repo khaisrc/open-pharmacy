@@ -26,6 +26,7 @@ from .factories import (
     PharmacyLocationFactory,
     PrescriberFactory,
     PrescriptionFactory,
+    StaffFactory,
 )
 
 EMBEDDED_DB_VARIABLE = "PHARMACY_TEST_DB"
@@ -142,3 +143,15 @@ def location(db):
 @pytest.fixture
 def prescription(db):
     return PrescriptionFactory()
+
+
+@pytest.fixture
+def pharmacist(db, pharmacy):
+    return StaffFactory(pharmacy=pharmacy)
+
+
+@pytest.fixture
+def technician(db, pharmacy):
+    return StaffFactory(
+        pharmacy=pharmacy, role="technician", registration_state="", registration_number=""
+    )

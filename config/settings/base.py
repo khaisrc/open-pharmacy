@@ -151,6 +151,10 @@ SPECTACULAR_SETTINGS = {
             "name": "Pharmacy Locations",
             "description": "Individual dispensing sites, keyed by NCPDP ID.",
         },
+        {
+            "name": "Staff",
+            "description": "Pharmacists, technicians and interns employed by a pharmacy.",
+        },
         {"name": "Addresses", "description": "Postal addresses shared by the records above."},
         {"name": "System", "description": "Unauthenticated service endpoints."},
     ],
