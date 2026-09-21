@@ -180,6 +180,19 @@ The test suite runs against PostgreSQL 18, the same engine as production, in a
 database pytest creates and drops. CI (`.github/workflows/test.yml`) runs the
 suite, ruff, and `makemigrations --check` through the same Compose file.
 
+Without Docker, the suite can bring its own PostgreSQL. The `pgserver` dev
+dependency bundles a server that runs as you, on a socket, with no daemon or
+sudo -- but it is PostgreSQL 16, so Compose remains the run that counts:
+
+```bash
+UV_PYTHON_DOWNLOADS=never uv sync --locked --all-groups   # needs a Python 3.12 on PATH
+uv run python manage.py collectstatic --noinput           # the docs pages need the manifest
+PHARMACY_TEST_DB=embedded uv run pytest
+```
+
+The last line of the run names the server it used. Without the variable the
+suite connects to `DATABASE_URL` exactly as in Compose.
+
 ### Layout
 
 ```

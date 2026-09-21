@@ -22,8 +22,14 @@ docker compose up --build        # after changing dependencies
 docker compose down -v           # stop and drop the database
 ```
 
-Do not run `pytest`, `ruff` or `manage.py` from the host `.venv`; the tests need
-PostgreSQL 18 and the venv is not the environment CI uses.
+Do not run `ruff` or `manage.py` from the host `.venv`; the venv is not the
+environment CI uses. The one exception is the test suite on a host with no
+Docker: `PHARMACY_TEST_DB=embedded uv run pytest` starts a PostgreSQL 16 from
+the `pgserver` dev dependency for the session (run `collectstatic` first, the
+docs tests need the manifest). It is a convenience, not parity -- Compose is
+PostgreSQL 18 and is what CI runs. The variable is read only in
+`pharmacy/tests/conftest.py`; settings, Compose and `.env.local` do not know
+it exists.
 
 Before handing work back, run the four things CI runs: `pytest`, `ruff check .`,
 `ruff format --check .`, and `makemigrations --check --dry-run`.
