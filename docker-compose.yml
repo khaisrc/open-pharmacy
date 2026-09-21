@@ -2,13 +2,13 @@ services:
   db:
     image: postgres:18
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-pharmacy_ops}
+      POSTGRES_DB: ${POSTGRES_DB:-open_pharmacy}
       POSTGRES_USER: ${POSTGRES_USER:-pharmacy}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pharmacy}
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pharmacy} -d ${POSTGRES_DB:-pharmacy_ops}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pharmacy} -d ${POSTGRES_DB:-open_pharmacy}"]
       interval: 3s
       timeout: 3s
       retries: 20
