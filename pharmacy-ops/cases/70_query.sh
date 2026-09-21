@@ -87,11 +87,14 @@ assert_jq 'all(.results[]; .status == "cancelled")' "the status filter returns o
 req GET "/prescriptions/?status=active&page_size=100"
 assert_jq 'all(.results[]; .status == "active")' "the status filter returns only active prescriptions"
 
-# Worth pinning down because it is the surprising branch: an unknown status is
-# treated as matching nothing rather than as a bad request.
+# An unknown value is a bad request, not an empty result. Worth pinning down
+# because the alternative is worse than it looks: 200 with count 0 would make a
+# typo in a query string indistinguishable from a correct query that happens to
+# match nothing. Every filter on this endpoint validates the same way.
 req GET "/prescriptions/?status=not-a-status"
-assert_status 200 "an unknown status value is not a 400"
-assert_jq_eq '.count' '0' "an unknown status value matches nothing"
+assert_status 400 "an unknown status value is rejected"
+assert_error_code "validation_error" "an unknown status value reports validation_error"
+assert_jq '.error.details.status | length > 0' "the rejection names the status field"
 
 section "filtering by the date a prescription was written"
 req GET "/prescriptions/?written_after=$(iso_days -200)&patient=${FX_PATIENT}&page_size=100"
