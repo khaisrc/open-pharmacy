@@ -38,11 +38,11 @@ class Prescription(TimeStampedModel):
     medication = models.ForeignKey(
         "pharmacy.Medication", on_delete=models.PROTECT, related_name="prescriptions"
     )
-    # Nullable because a draft need not be routed yet, but required to fill.
+    # Required: this service backs one pharmacy, so every prescription it holds
+    # is dispensed somewhere. The API fills in the home location when a client
+    # names none, so a caller still never has to supply it.
     pharmacy_location = models.ForeignKey(
         "pharmacy.PharmacyLocation",
-        null=True,
-        blank=True,
         on_delete=models.PROTECT,
         related_name="prescriptions",
     )

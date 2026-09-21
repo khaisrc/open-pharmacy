@@ -86,12 +86,6 @@ class TestFill:
         rx.refresh_from_db()
         assert rx.status == PrescriptionStatus.EXPIRED
 
-    def test_fill_requires_a_pharmacy_location(self, api):
-        rx = PrescriptionFactory(status=PrescriptionStatus.ACTIVE, pharmacy_location=None)
-        response = api.post(f"{URL}{rx.pk}/fill/")
-        assert response.status_code == 409
-        assert response.data["error"]["details"]["field"] == "pharmacy_location_id"
-
     def test_fill_exhausted_is_409(self, api):
         rx = PrescriptionFactory(status=PrescriptionStatus.ACTIVE, fills_authorized=1, fills_used=1)
         assert api.post(f"{URL}{rx.pk}/fill/").status_code == 409

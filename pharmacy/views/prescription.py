@@ -71,13 +71,6 @@ class PrescriptionViewSet(SoftDeleteModelViewSet):
                     details={"current_status": prescription.status},
                 )
 
-            if prescription.pharmacy_location_id is None:
-                raise Conflict(
-                    "This prescription has no pharmacy location; a fill must name "
-                    "a dispensing site.",
-                    details={"field": "pharmacy_location_id"},
-                )
-
             if prescription.fills_remaining <= 0:
                 raise Conflict(
                     "Every authorized fill has already been used.",
