@@ -12,10 +12,10 @@ req POST /prescriptions/ "$(jq -nc --arg p "$FX_PATIENT" --arg d "$FX_PRESCRIBER
   patient_id: $p, prescriber_id: $d, medication_id: $m,
   dose_amount: "1 tablet", quantity: 30, fills_authorized: 3,
   instructions: "Take one tablet by mouth daily.", notes: "Suite fixture." }')"
-assert_status 201 "POST /prescriptions/ creates a prescription"
-assert_jq '.id | test("^[0-9a-f-]{36}$")' "the new prescription has a UUID id"
-assert_jq_eq '.status' 'active' "a new prescription starts active"
-assert_jq_eq '.fills_used' '0' "a new prescription has no fills used"
+assert_status 201 "the prescription is created"
+assert_jq '.id | test("^[0-9a-f-]{36}$")' "it has a UUID id"
+assert_jq_eq '.status' 'active' "it starts active"
+assert_jq_eq '.fills_used' '0' "it has no fills used"
 assert_jq_eq '.fills_authorized' '3' "fills_authorized round-trips"
 assert_jq_eq '.dose_amount' '1 tablet' "dose_amount round-trips"
 assert_jq 'has("written_at") and (.written_at != null)' "written_at defaults to now"
@@ -39,7 +39,7 @@ assert_jq '.prescriber | has("npi") and has("practitioner_type")' \
 req POST /prescriptions/ "$(jq -nc --arg p "$FX_PATIENT" --arg d "$FX_PRESCRIBER" --arg m "$FX_MEDICATION" '{
   patient_id: $p, prescriber_id: $d, medication_id: $m, dose_amount: "2 tablets", quantity: 60 }')"
 assert_status 201 "fills_authorized may be left out"
-assert_jq_eq '.fills_authorized' '1' "fills_authorized defaults to a single fill"
+assert_jq_eq '.fills_authorized' '1' "it defaults to a single fill"
 
 section "the status a prescription may be created in"
 mk_with_status() {
@@ -48,18 +48,18 @@ mk_with_status() {
 }
 
 mk_with_status "active"
-assert_status 201 "a prescription may be created explicitly active"
+assert_status 201 "it may be created explicitly active"
 
 # completed, cancelled and expired are reached through /fill/ and /cancel/, so
 # a client cannot post its way straight into a terminal state.
 for terminal in completed cancelled expired; do
   mk_with_status "$terminal"
-  assert_status 400 "a prescription cannot be created as '${terminal}'"
-  assert_jq '.error.details.status | length > 0' "the '${terminal}' refusal names the status field"
+  assert_status 400 "it cannot be created as '${terminal}'"
+  assert_jq '.error.details.status | length > 0' "the refusal names the status field"
 done
 
 mk_with_status "on_hold"
-assert_status 400 "a prescription cannot be created on hold"
+assert_status 400 "it cannot be created on hold"
 
 mk_with_status "nonsense"
 assert_status 400 "an unknown status is rejected"
@@ -91,38 +91,38 @@ req POST /prescriptions/ "$(jq -nc --arg p "$FX_PATIENT" --arg d "$FX_PRESCRIBER
   patient_id: $p, prescriber_id: $d, medication_id: $m, dose_amount: "1 tablet", quantity: 30,
   written_at: $w, expires_at: $e }')"
 assert_status 400 "an expiry before the written date is rejected"
-assert_jq '.error.details.expires_at | length > 0' "the expiry error names the expires_at field"
+assert_jq '.error.details.expires_at | length > 0' "the error names the expires_at field"
 
 section "read and update"
 req GET "/prescriptions/${RX}/"
-assert_status 200 "GET /prescriptions/{id}/ returns the prescription"
-assert_jq_eq '.id' "$RX" "the retrieved prescription has the requested id"
+assert_status 200 "the prescription is returned"
+assert_jq_eq '.id' "$RX" "it is the prescription that was asked for"
 
 req PATCH "/prescriptions/${RX}/" '{"notes":"Patched by the suite."}'
-assert_status 200 "PATCH updates the notes"
+assert_status 200 "the prescription is updated"
 assert_jq_eq '.notes' 'Patched by the suite.' "the patched notes took effect"
-assert_jq_eq '.dose_amount' '1 tablet' "PATCH left the other fields alone"
+assert_jq_eq '.dose_amount' '1 tablet' "the other fields are untouched"
 
 # fills_used moves only through POST /fill/. If a PATCH could set it, a client
 # could route around the status changes that action owns.
 req PATCH "/prescriptions/${RX}/" '{"fills_used":99}'
-assert_status 200 "PATCH accepts a payload naming fills_used"
-assert_jq_eq '.fills_used' '0' "PATCH cannot move fills_used"
+assert_status 200 "the update is accepted"
+assert_jq_eq '.fills_used' '0' "fills_used did not move"
 
 req PATCH "/prescriptions/${RX}/" '{"id":"11111111-1111-4111-8111-111111111111"}'
-assert_status 200 "PATCH accepts a payload naming id"
-assert_jq_eq '.id' "$RX" "PATCH cannot change the id"
+assert_status 200 "the update is accepted"
+assert_jq_eq '.id' "$RX" "the id did not change"
 
 req PATCH "/prescriptions/${RX}/" "$(jq -nc --arg e "$(iso_days -3650)" '{expires_at: $e}')"
-assert_status 400 "PATCH rejects an expiry before the written date"
+assert_status 400 "an expiry before the written date is rejected here too"
 
 req PUT "/prescriptions/${RX}/" "$(jq -nc --arg p "$FX_PATIENT" --arg d "$FX_PRESCRIBER" --arg m "$FX_MEDICATION" '{
   patient_id: $p, prescriber_id: $d, medication_id: $m, dose_amount: "3 tablets", quantity: 90 }')"
-assert_status 200 "PUT replaces the prescription"
-assert_jq_eq '.dose_amount' '3 tablets' "the replaced dose_amount took effect"
+assert_status 200 "the prescription is replaced"
+assert_jq_eq '.dose_amount' '3 tablets' "the new dose_amount took effect"
 
 req PUT "/prescriptions/${RX}/" '{"dose_amount":"1 tablet"}'
-assert_status 400 "PUT without the foreign keys is rejected"
+assert_status 400 "a replacement without the foreign keys is rejected"
 
 section "status transitions a client may request"
 make_prescription "$FX_PATIENT" "$FX_PRESCRIBER" "$FX_MEDICATION"; MOVER="$NEW_ID"
@@ -140,20 +140,20 @@ assert_status 200 "setting the status it already has is allowed"
 
 for forbidden in cancelled completed expired; do
   req PATCH "/prescriptions/${MOVER}/" "$(jq -nc --arg s "$forbidden" '{status: $s}')"
-  assert_status 400 "a client cannot PATCH the status to '${forbidden}'"
+  assert_status 400 "a client cannot move the status to '${forbidden}'"
 done
 assert_jq '.error.details.status | has("hint")' "the refusal explains which endpoint owns the transition"
 
 section "missing records"
 req GET "/prescriptions/${MISSING_UUID}/"
-assert_status 404 "GET on an unknown id is 404"
-assert_error_code "not_found" "an unknown id reports not_found"
+assert_status 404 "an unknown id is 404"
+assert_error_code "not_found" "the error code is not_found"
 
 section "delete removes the record, unlike cancel"
 make_prescription "$FX_PATIENT" "$FX_PRESCRIBER" "$FX_MEDICATION"; DOOMED="$NEW_ID"
 req DELETE "/prescriptions/${DOOMED}/"
-assert_status 204 "DELETE on a prescription is 204"
+assert_status 204 "the prescription is deleted"
 req GET "/prescriptions/${DOOMED}/"
-assert_status 404 "a deleted prescription is no longer retrievable"
+assert_status 404 "it is no longer retrievable"
 req DELETE "/prescriptions/${DOOMED}/"
-assert_status 404 "deleting the same prescription twice is 404"
+assert_status 404 "deleting it a second time is 404"

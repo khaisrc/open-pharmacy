@@ -8,9 +8,31 @@ its own `cases/*.sh` and a `suite.env` describing how to reach that API.
 Nothing is imported from any service, so a suite exercises its API the way a
 client would.
 
-Every run writes `report.html` inside the suite directory — one section per
+Results read as Gherkin. A case file is a **Feature**, each `section` in it a
+**Scenario**, the fixtures it builds are **Given** steps, every request is a
+**When**, and the assertions that read the response are the **Then** and
+**And**s beneath it:
+
+```
+Feature: Patients
+
+  Background:
+       Given  an address exists
+
+  Scenario: create
+       When   POST /patients/
+  pass Then   the patient is created
+  pass And    it has a UUID id
+  fail And    phone_number round-trips
+```
+
+Outcomes sit in a gutter to the left of the keywords, so failures stay easy to
+find while the steps still read as steps.
+
+Every run writes `report.html` inside the suite directory — one Feature per
 case file, every exchange kept behind a disclosure — and a `junit.xml` beside
-it for CI.
+it for CI. Both are laid out the same way; no one of the three re-derives the
+structure, because every event in the log names the step it belongs to.
 
 ## Running it
 
@@ -103,9 +125,9 @@ explicit `-p` greater than one is refused as a contradiction.
 ### The progress display
 
 Attached to a terminal, a run draws one bar per case file in place of the
-per-assertion lines, and afterwards prints the full transcript of whichever
-cases failed -- the one-line failure summary does not carry the request and
-response that explain it.
+step lines, and afterwards prints the full transcript of whichever cases
+failed -- the failure summary names the feature, the scenario and the step,
+but not the request and response that explain it.
 
 A bar is drawn against the number of assertions that case made last time,
 kept in `SUITE/.assert-counts` (untracked). The number is not knowable up
@@ -189,15 +211,20 @@ cd ../open-pharmacy && docker compose down -v && ./scripts/dev.sh
 
 ### The report
 
-`report.html` opens in a browser with no server behind it. It is organised the
-way the run was written:
+`report.html` opens in a browser with no server behind it. It is the same
+feature file the terminal printed:
 
-- **one collapsible section per case file**, showing its pass and fail tallies.
-  A section that failed is expanded on load; the rest start closed, so a green
+- **one collapsible Feature per case file**, showing its pass and fail tallies.
+  A Feature that failed is expanded on load; the rest start closed, so a green
   run is a single screen.
-- **within a section, the `section "..."` headings from the case file**, then
-  every request in the order it was sent — method, path, status, duration.
-- **under each request, the assertions that read its response.** A failure shows
+- **within it, one Scenario per `section "..."`** — plus a `Background` for
+  whatever the case file set up before its first section.
+- **under each Scenario, its Given and When steps in the order they ran**, each
+  labelled with its keyword in the same column as the `Then`s below it. A step
+  line carries only its own words and a duration -- the status of its request
+  is on the Response disclosure, and a Given that took several requests labels
+  each of them, status included, underneath.
+- **under each When, the Then and Ands that read its response.** A failure shows
   its expected-versus-actual inline, in full.
 - **two disclosures per request, stacked: Request then Response**, holding the
   URL, the query parameters, every header, and the body. JSON bodies are
@@ -205,12 +232,9 @@ way the run was written:
   characters (a clipped body is shown plain, because the cut can land
   mid-token).
 
-Across the top: totals, a text filter over paths and assertion text, a failures-only
-toggle, an expand-all button and a light/dark switch that follows the OS by default.
-
-Requests that nothing asserts against — the fixtures a case builds before it can
-test anything — are dimmed and tagged `setup`. They are kept because they often
-explain the request after them.
+Across the top: totals, a text filter over step text, paths and outcomes, a
+failures-only toggle, an expand-all button and a light/dark switch that follows
+the OS by default.
 
 The page loads Tailwind and daisyUI for its components and highlight.js for
 JSON from a CDN, and defines no components of its own, which keeps
@@ -225,8 +249,11 @@ offline it is readable but unstyled. `Authorization` headers are replaced with
 `Basic <user> ‹redacted›`, so the report is safe to attach to a ticket.
 
 `junit.xml` carries the same results, one `<testsuite>` per case file and one
-`<testcase>` per assertion, for CI systems and generic viewers
-(`junit2html`, `xunit-viewer`, and the like).
+`<testcase>` per Then, for CI systems and generic viewers (`junit2html`,
+`xunit-viewer`, and the like). A test's `classname` is its feature and scenario
+and its `name` is the whole step -- `When POST /patients/ / Then the patient is
+created` -- so a CI failure list reads on its own, without the report open
+beside it.
 
 ### What it covers
 
@@ -257,11 +284,15 @@ source "$SUITE_DIR/lib/gen.sh"
 source "$SUITE_PATH/lib/gen.sh"
 source "$SUITE_PATH/lib/fixtures.sh"
 
-section "what this group is about"
+section "what this scenario is about"
 req POST /addresses/ '{"line1":"1 A St","city":"Portland","state":"OR","postal_code":"97205"}'
-assert_status 201 "POST /addresses/ creates an address"
+assert_status 201 "the address is created"
 assert_jq_eq '.state' 'OR' "state round-trips"
 ```
+
+Write each description as the rest of its Then: the keyword and the request
+above it are already on the line, so `"the address is created"` reads as a step
+where `"POST /addresses/ creates an address"` would repeat the When.
 
 `req METHOD PATH [JSON]` sends an authenticated request and leaves the result in
 `$STATUS` and `$BODY`; `req_anon` and `req_as USER PASS` are the unauthenticated
@@ -282,8 +313,22 @@ setup can stop the file; calling one as `$(make_patient)` would run it in a
 subshell where that cannot work. A failed fixture is reported as a setup
 failure, not as a test failure.
 
-`section "..."` groups what follows, both in the terminal and in the report, so
-a new group of assertions needs no other bookkeeping.
+Each is also a Given step, announcing what it leaves behind rather than the
+requests it takes to get there — `make_cast` prints one `Given` line, not four.
+Setup a case does inline, outside a fixture builder, says so the same way:
+
+```bash
+given "it is taken off hold" req PATCH "/prescriptions/${HELD}/" '{"status":"active"}'
+```
+
+`given TEXT COMMAND [ARGS...]` runs the command in the current shell, so
+`$NEW_ID` and a failing `die` still reach the case file, and files every request
+it makes under that one step.
+
+`section "..."` opens a Scenario, both in the terminal and in the report, so a
+new group of steps needs no other bookkeeping. Steps taken before the first
+`section` are the file's `Background`, which is why a case file that asserts
+anything opens a section first.
 
 Every request is logged for the report whether or not anything asserts against
 it, so nothing extra is needed to make a new case show up there.

@@ -7,10 +7,17 @@
 #
 # Nothing here cleans up: the suite leaves its rows behind by design, which is
 # why every unique value comes from lib/gen.sh.
+#
+# Each helper is a Given step: the public name says what the fixture leaves
+# behind, and `given` (lib/http.sh) files every request it makes under that one
+# step. The work lives in the underscored twin, so a builder that calls another
+# -- make_cast calls four -- reads as a single Given rather than as the
+# requests it happens to take.
 
 NEW_ID=""
 
-make_address() {
+make_address() { given "an address exists" _make_address "$@"; }
+_make_address() {
   local overrides="${1:-}"; [[ -n "$overrides" ]] || overrides='{}'
   local payload
   payload="$(jq -nc --argjson o "$overrides" '{
@@ -32,7 +39,8 @@ make_address() {
 # search test that matched all of them could not assert an exact count.
 NEW_NDC=""
 NEW_NAME=""
-make_medication() {
+make_medication() { given "a medication exists" _make_medication "$@"; }
+_make_medication() {
   local overrides="${1:-}"; [[ -n "$overrides" ]] || overrides='{}'
   NEW_NDC="$(gen_ndc)"
   NEW_NAME="Testazepam ${RUN_TAG}x$(_rand 1000000)"
@@ -51,7 +59,8 @@ make_medication() {
 # make_patient ADDRESS_ID [overrides_json] -- also sets NEW_LAST_NAME, unique
 # per patient for the same reason make_medication's name is.
 NEW_LAST_NAME=""
-make_patient() {
+make_patient() { given "a patient exists" _make_patient "$@"; }
+_make_patient() {
   local address_id="$1" overrides="${2:-}"; [[ -n "$overrides" ]] || overrides='{}'
   NEW_LAST_NAME="Patient-${RUN_TAG}x$(_rand 1000000)"
   local payload
@@ -72,7 +81,8 @@ make_patient() {
 }
 
 # make_prescriber ADDRESS_ID [overrides_json]
-make_prescriber() {
+make_prescriber() { given "a prescriber exists" _make_prescriber "$@"; }
+_make_prescriber() {
   local address_id="$1" overrides="${2:-}"; [[ -n "$overrides" ]] || overrides='{}'
   local payload
   payload="$(jq -nc --arg addr "$address_id" --arg tag "$RUN_TAG" \
@@ -89,7 +99,8 @@ make_prescriber() {
 }
 
 # make_prescription PATIENT_ID PRESCRIBER_ID MEDICATION_ID [overrides_json]
-make_prescription() {
+make_prescription() { given "a prescription exists" _make_prescription "$@"; }
+_make_prescription() {
   local patient="$1" prescriber="$2" medication="$3" overrides="${4:-}"
   [[ -n "$overrides" ]] || overrides='{}'
   local payload
@@ -114,7 +125,8 @@ make_prescription() {
 # needs to scope itself to this cast.
 FX_ADDRESS=""; FX_PATIENT=""; FX_PRESCRIBER=""; FX_MEDICATION=""
 FX_MEDICATION_NAME=""; FX_PATIENT_LAST_NAME=""
-make_cast() {
+make_cast() { given "a patient, a prescriber and a medication exist" _make_cast "$@"; }
+_make_cast() {
   make_address;                    FX_ADDRESS="$NEW_ID"
   make_medication;                 FX_MEDICATION="$NEW_ID"; FX_MEDICATION_NAME="$NEW_NAME"
   make_patient "$FX_ADDRESS";      FX_PATIENT="$NEW_ID";    FX_PATIENT_LAST_NAME="$NEW_LAST_NAME"

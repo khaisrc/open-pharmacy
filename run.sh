@@ -41,15 +41,19 @@ Environment:
   JOBS       same as -p (default 8)
   NO_COLOR   set to disable colour and the progress display
 
-Every run writes an HTML report next to the suite -- one section per case
-file, with the full request and response behind a disclosure on each
-assertion -- and a junit.xml beside it for CI.
+Results read as Gherkin: a case file is a Feature, each section in it a
+Scenario, fixtures are Given steps, requests are Whens, and the assertions
+that read a response are the Thens and Ands beneath it.
+
+Every run writes an HTML report next to the suite -- one feature per case
+file, with the full request and response behind a disclosure on each step --
+and a junit.xml beside it for CI.
 
 Case files share no data: each builds its own fixtures from run-scoped unique
 values, so -p can run them concurrently. Attached to a terminal, a run draws a
-progress bar per case file in place of the assertion lines, and prints the
-full transcript afterwards for whichever cases failed. Redirect stdout (as CI
-does) and the plain per-assertion output comes back.
+progress bar per case file in place of the step lines, and prints the full
+transcript afterwards for whichever cases failed. Redirect stdout (as CI does)
+and the plain step-by-step output comes back.
 
 The suite creates records and never deletes them. Every value the API requires
 to be unique is generated per run, so it is safe to run repeatedly against the
@@ -137,6 +141,21 @@ c_green=''; c_red=''; c_bold=''; c_dim=''; c_off=''
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
   c_green=$'\033[32m'; c_red=$'\033[31m'; c_bold=$'\033[1m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
 fi
+
+# A run reads as Gherkin: a case file is a Feature, the sections inside it are
+# Scenarios, and lib/http.sh prints the Given/When/Then steps under them. The
+# file name is the only part of that heading run.sh owns.
+#
+# '30_patients' -> 'Patients'. bash 3.2 has no ${x^}, hence the tr.
+feature_title() {
+  local n="${1#[0-9]*_}"
+  n="${n//_/ }"
+  printf '%s%s' "$(printf '%s' "${n:0:1}" | tr '[:lower:]' '[:upper:]')" "${n:1}"
+}
+
+feature_heading() { # feature_heading CASE_NAME
+  printf '%sFeature:%s %s\n' "$c_bold" "$c_off" "$(feature_title "$1")"
+}
 
 # --- preflight ---------------------------------------------------------------
 
@@ -295,8 +314,8 @@ _draw() { # _draw [FIRST] -- prints exactly $PROGRESS_LINES lines
   for case_file in "${files[@]}"; do
     name="$(basename "$case_file" .sh)"
     ev="$RESULT_DIR/events.${name}.jsonl"
-    passed="$(_tally "$ev" '"outcome":"PASS"')"
-    failed="$(_tally "$ev" '"outcome":"FAIL"')"
+    passed="$(_tally "$ev" '"outcome":"pass"')"
+    failed="$(_tally "$ev" '"outcome":"fail"')"
     expect="$(_expected "$name")"
     tp=$(( tp + passed )); tf=$(( tf + failed ))
     # A case that has already failed goes red as it runs, rather than looking
@@ -328,7 +347,7 @@ _draw() { # _draw [FIRST] -- prints exactly $PROGRESS_LINES lines
 
 run_case() { # run to a per-case buffer, then mark it finished
   local f="$1" name; name="$(basename "$f" .sh)"
-  { echo; echo "${c_bold}${name}${c_off}"; bash "$f"; } > "$RESULT_DIR/out.${name}" 2>&1
+  { echo; feature_heading "$name"; bash "$f"; } > "$RESULT_DIR/out.${name}" 2>&1
   local rc=$?
   : > "$RESULT_DIR/done.${name}"
   return $rc
@@ -344,7 +363,7 @@ if [[ $BUFFERED -eq 0 ]]; then
   # the only mode in which -x can stop the run where it failed.
   for case_path in "${files[@]}"; do
     echo
-    echo "${c_bold}$(basename "$case_path" .sh)${c_off}"
+    feature_heading "$(basename "$case_path" .sh)"
     bash "$case_path"
     rc=$?
     if [[ $rc -ne 0 && -n "${FAIL_FAST:-}" ]]; then aborted=1; break; fi
@@ -392,7 +411,7 @@ if [[ $BUFFERED -eq 1 ]]; then
     name="$(basename "$case_path" .sh)"
     out="$RESULT_DIR/out.${name}"
     [[ -f "$out" ]] || continue
-    if [[ $PROGRESS -eq 0 ]] || grep -q '"outcome":"FAIL"' \
+    if [[ $PROGRESS -eq 0 ]] || grep -q '"outcome":"fail"' \
          "$RESULT_DIR/events.${name}.jsonl" 2>/dev/null; then
       cat "$out"
     fi
@@ -402,8 +421,8 @@ fi
 # --- report ------------------------------------------------------------------
 
 elapsed=$(( $(date +%s) - started ))
-passed="$(grep -c '"outcome":"PASS"' "$EVENTS" 2>/dev/null || true)"
-failed="$(grep -c '"outcome":"FAIL"' "$EVENTS" 2>/dev/null || true)"
+passed="$(grep -c '"outcome":"pass"' "$EVENTS" 2>/dev/null || true)"
+failed="$(grep -c '"outcome":"fail"' "$EVENTS" 2>/dev/null || true)"
 passed="$(echo "${passed:-0}" | tr -dc '0-9')"; passed="${passed:-0}"
 failed="$(echo "${failed:-0}" | tr -dc '0-9')"; failed="${failed:-0}"
 
@@ -426,10 +445,19 @@ fi
 echo
 if [[ "${failed:-0}" -gt 0 ]]; then
   echo "${c_bold}Failures${c_off}"
-  jq -r 'select(.t == "assertion" and .outcome == "FAIL")
-         | "\(.case)\t\(.description)"' "$EVENTS" |
-    while IFS=$'\t' read -r case desc; do
-      echo "  ${c_red}x${c_off} ${c_dim}${case}${c_off}  ${desc}"
+  # Each failure named the way the transcript above shows it: which feature,
+  # which scenario, and the step that did not hold.
+  last=""
+  jq -r 'select(.t == "assertion" and .outcome == "fail")
+         | [.case, (if (.section // "") == "" then "Background" else .section end),
+            (.keyword // "Then"), .description] | @tsv' "$EVENTS" |
+    while IFS=$'\t' read -r case scenario keyword desc; do
+      # One heading per scenario, however many of its steps failed.
+      if [[ "${case}/${scenario}" != "$last" ]]; then
+        echo "  ${c_red}x${c_off} ${c_dim}${case}${c_off}  ${scenario}"
+        last="${case}/${scenario}"
+      fi
+      echo "       ${c_dim}${keyword}${c_off} ${desc}"
     done
   echo
 fi
