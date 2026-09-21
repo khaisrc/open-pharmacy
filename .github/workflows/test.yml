@@ -39,11 +39,14 @@ jobs:
       - name: Build the image
         run: docker compose build web
 
+      # --no-cache because /app is the bind-mounted checkout, which the
+      # runner owns as a different uid than the image's app user, so ruff
+      # cannot create .ruff_cache there. CI reuses no cache between runs anyway.
       - name: ruff check
-        run: docker compose run --rm -T web ruff check .
+        run: docker compose run --rm -T web ruff check --no-cache .
 
       - name: ruff format
-        run: docker compose run --rm -T web ruff format --check .
+        run: docker compose run --rm -T web ruff format --check --no-cache .
 
       # A model edited without its migration passes every test and then fails
       # on deploy, so the check belongs in CI rather than in review.
