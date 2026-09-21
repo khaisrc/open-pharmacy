@@ -12,7 +12,7 @@ req POST /medications/ "$(jq -nc --arg ndc "$NDC" --arg tag "$RUN_TAG" \
 assert_status 201 "POST /medications/ creates a medication"
 assert_jq '.id | test("^[0-9a-f-]{36}$")' "the new medication has a UUID id"
 assert_jq_eq '.ndc' "$(ndc_digits "$NDC")" "a hyphenated NDC is stored as 11 digits"
-assert_jq_eq '.ndc_display' "$(ndc_display_form "$NDC")" "ndc_display is the 5-4-2 form"
+assert_jq_eq '.formatted_ndc' "$(ndc_display_form "$NDC")" "formatted_ndc is the 5-4-2 form"
 assert_jq_eq '.form' 'tablet' "form round-trips"
 MED="$(jqv .id)"
 

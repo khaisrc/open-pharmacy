@@ -44,7 +44,7 @@ gen_ndc() {
 
 ndc_digits() { echo "${1//-/}"; }
 
-# The 5-4-2 display form the API returns in ndc_display.
+# The 5-4-2 display form the API returns in formatted_ndc.
 ndc_display_form() {
   local d; d="$(ndc_digits "$1")"
   echo "${d:0:5}-${d:5:4}-${d:9:2}"
