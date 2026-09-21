@@ -126,8 +126,10 @@ def validate_npi(value):
 def normalize_ndc(value):
     """Collapse an NDC to its 11-digit form.
 
-    Real NDCs arrive as 4-4-2, 5-3-2 and 5-4-1 segments that all denote the same
-    product; normalizing on save is what makes `unique` actually mean unique.
+    Real NDCs arrive as 4-4-2, 5-3-2, 5-4-1 and 5-4-2 segments that all denote the
+    same product; normalizing on save is what makes `unique` actually mean unique.
+    The first three are the 10-digit layouts, each padding a different segment;
+    5-4-2 is already 11 digits and passes through unchanged.
     """
     raw = (value or "").strip()
     if not raw:
@@ -141,8 +143,15 @@ def normalize_ndc(value):
                 code="invalid_ndc",
             )
         labeler, product, package = segments
-        if (len(labeler), len(product), len(package)) not in {(4, 4, 2), (5, 3, 2), (5, 4, 1)}:
-            raise ValidationError("NDC segments must be 4-4-2, 5-3-2 or 5-4-1.", code="invalid_ndc")
+        if (len(labeler), len(product), len(package)) not in {
+            (4, 4, 2),
+            (5, 3, 2),
+            (5, 4, 1),
+            (5, 4, 2),
+        }:
+            raise ValidationError(
+                "NDC segments must be 4-4-2, 5-3-2, 5-4-1 or 5-4-2.", code="invalid_ndc"
+            )
         return f"{labeler.zfill(5)}{product.zfill(4)}{package.zfill(2)}"
 
     if not raw.isdigit():
