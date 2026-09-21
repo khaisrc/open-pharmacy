@@ -93,5 +93,19 @@ class Prescription(TimeStampedModel):
     def is_expired(self):
         return self.expires_at is not None and self.expires_at <= timezone.now()
 
+    def expire_if_due(self):
+        """Record a lapsed expiry; returns True when the status changed.
+
+        There is no background sweep, so every write path that cares whether a
+        prescription is still active calls this first. Only an active
+        prescription expires: a lapsed hold stays on hold, so the record still
+        says it was paused rather than that it ran out.
+        """
+        if self.status != PrescriptionStatus.ACTIVE or not self.is_expired:
+            return False
+        self.status = PrescriptionStatus.EXPIRED
+        self.save(update_fields=["status", "updated_at"])
+        return True
+
     def __str__(self):
         return f"{self.medication} for {self.patient}"

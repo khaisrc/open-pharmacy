@@ -1,6 +1,8 @@
 from django.conf import settings
+from django.utils import timezone
 from rest_framework import serializers
 
+from pharmacy.exceptions import Conflict
 from pharmacy.models import (
     ALLOWED_TRANSITIONS,
     Medication,
@@ -104,7 +106,7 @@ class PrescriptionSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {
                     "message": f"Cannot move a prescription from '{current}' to '{value}'.",
-                    "current_status": current,
+                    "status": current,
                     "allowed_targets": sorted(allowed),
                     "hint": self._transition_hint(current, value, allowed),
                 }
@@ -134,6 +136,9 @@ class PrescriptionSerializer(serializers.ModelSerializer):
         ).first()
 
     def validate(self, attrs):
+        if self.instance is not None and self.instance.is_terminal:
+            self._reject_changes_to_terminal(attrs)
+
         if self.instance is None and attrs.get("pharmacy_location") is None:
             location = self._home_pharmacy_location()
             if location is None:
@@ -147,6 +152,12 @@ class PrescriptionSerializer(serializers.ModelSerializer):
                 )
             attrs["pharmacy_location"] = location
 
+        if self.instance is None and not attrs.get("written_at"):
+            # Pinned here rather than left to the model default so the value
+            # expires_at is checked against is the value that gets saved;
+            # otherwise a past expires_at with no written_at would skip this
+            # check and trip the database constraint instead.
+            attrs["written_at"] = timezone.now()
         written_at = attrs.get("written_at") or getattr(self.instance, "written_at", None)
         expires_at = attrs.get("expires_at", getattr(self.instance, "expires_at", None))
         if written_at and expires_at and expires_at <= written_at:
@@ -161,3 +172,22 @@ class PrescriptionSerializer(serializers.ModelSerializer):
                 {"fills_authorized": f"Cannot authorize fewer fills than the {used} already used."}
             )
         return attrs
+
+    def _reject_changes_to_terminal(self, attrs):
+        """A completed, cancelled or expired prescription is a closed record.
+
+        validate_status already refuses a status change out of a terminal
+        state; this covers every other field, so a completed prescription
+        cannot quietly gain fills or move to another patient. A write that
+        changes nothing is allowed through, so a PUT of the current body is
+        still a 200.
+        """
+        changed = sorted(
+            field for field, value in attrs.items() if getattr(self.instance, field) != value
+        )
+        if changed:
+            raise Conflict(
+                f"A '{self.instance.status}' prescription can no longer be changed.",
+                code="already_terminal",
+                details={"status": self.instance.status, "fields": changed},
+            )
