@@ -34,9 +34,9 @@ Options:
 | --- | --- |
 | `-s SUITE` | which suite to run (default: the only one present) |
 | `-f PATTERN` | run only case files whose name contains `PATTERN` |
-| `-p N` | run up to N case files concurrently (default 1) |
+| `-p N` | run up to N case files concurrently (default 8; `1` is sequential) |
 | `-v` | print every request and response |
-| `-x` | stop at the first failing assertion (not with `-p`) |
+| `-x` | stop at the first failing assertion (runs sequentially) |
 | `-r PATH` | write the HTML report here (default `SUITE/report.html`) |
 | `-j PATH` | write JUnit XML here (default `SUITE/junit.xml`) |
 | `-R` | skip both reports |
@@ -51,6 +51,7 @@ Configuration comes from the environment:
 | `API_USER` | `admin` |
 | `API_PASS` | `admin` |
 | `SUITE_NAME` | same as `-s` |
+| `JOBS` | same as `-p` (`8`) |
 
 ```bash
 BASE_URL=https://staging.example.com API_PASS=hunter2 ./run.sh -s pharmacy-ops
@@ -62,15 +63,26 @@ BASE_URL=https://staging.example.com API_PASS=hunter2 ./run.sh -s pharmacy-ops
 ### Running case files concurrently
 
 Case files share no data. Each one builds its own fixtures from values that
-lib/gen.sh makes unique per run, so `-p N` can run N of them at once:
+lib/gen.sh makes unique per run, so they run concurrently by default -- eight
+at a time, which takes this suite from about 72s to about 12s:
 
 ```bash
-./run.sh -p 8
+./run.sh            # eight at a time
+./run.sh -p 1       # one at a time, streaming to the terminal as it goes
+JOBS=1 ./run.sh     # same, for CI that would rather watch the output arrive
 ```
 
-On this suite that takes the wall clock from about 72s to about 12s, which is
-roughly the floor: the longest single case file bounds it, so raising `-p`
-past the number of case files buys nothing.
+Twelve seconds is the floor, not a coincidence of the worker count: the
+longest case file takes about that long run entirely on its own, so raising
+`-p` past the number of case files changes nothing.
+
+The limit worth knowing is not the worker count but the API's rate limit.
+`pharmacy-ops` throttles an authenticated user to 1000 requests a minute and
+one full run makes about 250, so a single run is never close -- but five runs
+inside the same minute are, and the tail of the fifth comes back 429. At one
+worker a run takes long enough that this cannot happen; at eight it can, if
+you are iterating in a tight loop. Space the runs out, narrow with `-f`, or
+raise `THROTTLE_USER` for local work.
 
 Assertions are written so that concurrency cannot change their outcome --
 anything counting rows filters on this run's own fixtures rather than on the
@@ -79,8 +91,14 @@ holds seed data and every previous run's rows. Each case writes its own event
 log and `run.sh` concatenates them in suite order afterwards, so the report
 and the JUnit XML come out identical either way.
 
-`-x` stops at the first failing assertion and so cannot be combined with `-p`:
-case files already in flight would run to completion regardless.
+Concurrent cases cannot stream to the terminal, so their output is buffered
+and printed when the run ends rather than as it happens. `-p 1` restores the
+live stream.
+
+`-x` stops at the first failing assertion, which a concurrent run cannot do:
+case files already in flight would run to completion regardless. Passing `-x`
+alone therefore runs the suite sequentially; passing it together with an
+explicit `-p` greater than one is refused as a contradiction.
 
 ### The progress display
 

@@ -14,7 +14,8 @@ FILTER=""
 SUITE="${SUITE_NAME:-}"
 REPORT_PATH=""
 JUNIT_PATH=""
-JOBS=1
+: "${JOBS:=8}"
+JOBS_SET=0
 
 usage() {
   cat <<'USAGE'
@@ -23,9 +24,9 @@ Usage: ./run.sh [options]
   -s SUITE     which suite to run (a directory with its own cases/) --
                default: the only such directory found, if there is one
   -f PATTERN   run only case files whose name contains PATTERN
-  -p N         run up to N case files concurrently (default 1)
+  -p N         run up to N case files concurrently (default 8; 1 is sequential)
   -v           print every request and response
-  -x           stop at the first failing assertion (not with -p)
+  -x           stop at the first failing assertion (runs sequentially)
   -r PATH      write the HTML report here (default SUITE/report.html)
   -j PATH      write JUnit XML here (default SUITE/junit.xml)
   -R           skip both reports
@@ -37,6 +38,7 @@ Environment:
   API_USER   default admin
   API_PASS   default admin
   SUITE_NAME same as -s
+  JOBS       same as -p (default 8)
   NO_COLOR   set to disable colour and the progress display
 
 Every run writes an HTML report next to the suite -- one section per case
@@ -60,7 +62,7 @@ while getopts ":s:f:p:r:j:Rvxlh" opt; do
   case "$opt" in
     s) SUITE="$OPTARG" ;;
     f) FILTER="$OPTARG" ;;
-    p) JOBS="$OPTARG" ;;
+    p) JOBS="$OPTARG"; JOBS_SET=1 ;;
     r) REPORT_PATH="$OPTARG" ;;
     j) JUNIT_PATH="$OPTARG" ;;
     R) NO_REPORT=1 ;;
@@ -80,10 +82,15 @@ esac
 
 # -x stops the run at the first failure, which it cannot do once other case
 # files are already in flight: they would run to completion regardless, and
-# which of them had got how far would vary between runs.
-if [[ "$JOBS" -gt 1 && -n "${FAIL_FAST:-}" ]]; then
-  echo "-x and -p cannot be combined: a concurrent run cannot stop at the first failure" >&2
-  exit 2
+# which of them had got how far would vary between runs. Asking for both at
+# once is a contradiction; asking for -x alone just means the default
+# concurrency is not what this run wants.
+if [[ -n "${FAIL_FAST:-}" ]]; then
+  if [[ $JOBS_SET -eq 1 && "$JOBS" -gt 1 ]]; then
+    echo "-x and -p cannot be combined: a concurrent run cannot stop at the first failure" >&2
+    exit 2
+  fi
+  JOBS=1
 fi
 
 # --- suite selection -----------------------------------------------------
