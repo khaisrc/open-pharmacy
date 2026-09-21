@@ -30,3 +30,18 @@ class SoftDeleteModelViewSet(viewsets.ModelViewSet):
             )
         instance.delete()
 
+
+def nested_list(viewset_class, request, **scope):
+    """Serve `viewset_class`'s list action restricted to `scope`.
+
+    A nested route such as /patients/{id}/prescriptions/ is the child list with
+    one filter pinned. Running it through the child viewset keeps the
+    select_related list, filterset, search, ordering and pagination defined in
+    one place, so ?status= works there exactly as it does at the top level.
+    """
+    view = viewset_class(request=request, format_kwarg=None, action="list")
+    view.kwargs = {}
+    queryset = view.filter_queryset(view.get_queryset().filter(**scope))
+    page = view.paginate_queryset(queryset)
+    serializer = view.get_serializer(page, many=True)
+    return view.get_paginated_response(serializer.data)

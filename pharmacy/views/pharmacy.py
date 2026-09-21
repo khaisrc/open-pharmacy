@@ -3,10 +3,11 @@ from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework.decorators import action
 
 from pharmacy.filters import PharmacyFilter
-from pharmacy.models import Pharmacy, PharmacyLocation
+from pharmacy.models import Pharmacy
 from pharmacy.serializers import PharmacyLocationSerializer, PharmacySerializer
 
-from .base import SoftDeleteModelViewSet
+from .base import SoftDeleteModelViewSet, nested_list
+from .pharmacy_location import PharmacyLocationViewSet
 from .tags import tagged
 
 
@@ -33,12 +34,4 @@ class PharmacyViewSet(SoftDeleteModelViewSet):
     )
     @action(detail=True, methods=["get"])
     def locations(self, request, pk=None):
-        pharmacy = self.get_object()
-        queryset = PharmacyLocation.objects.filter(pharmacy=pharmacy).select_related(
-            "pharmacy", "address"
-        )
-        page = self.paginate_queryset(queryset)
-        serializer = PharmacyLocationSerializer(
-            page, many=True, context=self.get_serializer_context()
-        )
-        return self.get_paginated_response(serializer.data)
+        return nested_list(PharmacyLocationViewSet, request, pharmacy=self.get_object())

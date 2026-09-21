@@ -74,6 +74,16 @@ class TestPatients:
         body = api.get(f"{self.URL}{rx.patient.pk}/prescriptions/").data
         assert body["count"] == 1
 
+    def test_nested_prescriptions_route_takes_the_same_filters(self, api):
+        """The nested list is the prescription list with one filter pinned, so
+        ?status= and friends work there exactly as at the top level."""
+        active = PrescriptionFactory(status="active")
+        PrescriptionFactory(patient=active.patient, status="cancelled")
+        url = f"{self.URL}{active.patient.pk}/prescriptions/"
+        assert api.get(url).data["count"] == 2
+        body = api.get(f"{url}?status=active").data
+        assert [row["id"] for row in body["results"]] == [str(active.pk)]
+
 
 class TestPrescribers:
     URL = "/api/v1/prescribers/"

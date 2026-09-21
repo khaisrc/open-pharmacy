@@ -2,10 +2,11 @@ from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework.decorators import action
 
 from pharmacy.filters import PrescriberFilter
-from pharmacy.models import Prescriber, Prescription
+from pharmacy.models import Prescriber
 from pharmacy.serializers import PrescriberSerializer, PrescriptionSerializer
 
-from .base import SoftDeleteModelViewSet
+from .base import SoftDeleteModelViewSet, nested_list
+from .prescription import PrescriptionViewSet
 from .tags import tagged
 
 
@@ -24,15 +25,4 @@ class PrescriberViewSet(SoftDeleteModelViewSet):
     )
     @action(detail=True, methods=["get"])
     def prescriptions(self, request, pk=None):
-        prescriber = self.get_object()
-        queryset = Prescription.objects.filter(prescriber=prescriber).select_related(
-            "patient",
-            "prescriber",
-            "medication",
-            "pharmacy_location",
-            "pharmacy_location__pharmacy",
-            "pharmacy_location__address",
-        )
-        page = self.paginate_queryset(queryset)
-        serializer = PrescriptionSerializer(page, many=True, context=self.get_serializer_context())
-        return self.get_paginated_response(serializer.data)
+        return nested_list(PrescriptionViewSet, request, prescriber=self.get_object())

@@ -45,6 +45,13 @@ class TestBothShapes:
         assert body["count"] == 2
         assert {row["pharmacy"]["id"] for row in body["results"]} == {str(mine.pk)}
 
+    def test_nested_roster_takes_the_same_filters(self, api):
+        mine = PharmacyFactory()
+        PharmacyLocationFactory(pharmacy=mine, location_type="retail")
+        specialty = PharmacyLocationFactory(pharmacy=mine, location_type="specialty")
+        body = api.get(f"{PHARMACIES}{mine.pk}/locations/?location_type=specialty").data
+        assert [row["id"] for row in body["results"]] == [str(specialty.pk)]
+
 
 class TestLocationIdentifiers:
     def test_duplicate_ncpdp_is_409(self, api, address, pharmacy):
