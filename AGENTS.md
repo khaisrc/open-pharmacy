@@ -1,8 +1,9 @@
 # AGENTS.md
 
-Working notes for coding agents. `README.md` documents the API and the domain;
-this file covers how to run things and the conventions that are easy to violate.
-Where they disagree, the code wins.
+Working notes for coding agents. `docs/` documents the API and the domain, and
+`README.md` is the overview that links to it; this file covers how to run things
+and the conventions that are easy to violate. Where they disagree, the code wins.
+New long-form documentation belongs in `docs/`, not in the README.
 
 ## Running commands
 
@@ -22,8 +23,14 @@ docker compose up --build        # after changing dependencies
 docker compose down -v           # stop and drop the database
 ```
 
-Do not run `pytest`, `ruff` or `manage.py` from the host `.venv`; the tests need
-PostgreSQL 18 and the venv is not the environment CI uses.
+Do not run `ruff` or `manage.py` from the host `.venv`; the venv is not the
+environment CI uses. The one exception is the test suite on a host with no
+Docker: `PHARMACY_TEST_DB=embedded uv run pytest` starts a PostgreSQL 16 from
+the `pgserver` dev dependency for the session (run `collectstatic` first, the
+docs tests need the manifest). It is a convenience, not parity -- Compose is
+PostgreSQL 18 and is what CI runs. The variable is read only in
+`pharmacy/tests/conftest.py`; settings, Compose and `.env.local` do not know
+it exists.
 
 Before handing work back, run the four things CI runs: `pytest`, `ruff check .`,
 `ruff format --check .`, and `makemigrations --check --dry-run`.
@@ -85,6 +92,19 @@ across endpoints (e.g. `details.status` for the current status).
 through `nested_list(PrescriptionViewSet, request, patient=...)` so the child's
 `select_related`, filterset, search, ordering and pagination stay defined once.
 Do not re-implement a child list on the parent.
+
+**Sub-resources are scoped by the URL.** Locations and staff live under
+`/pharmacies/{pharmacy_id}/` with full CRUD: `PharmacyScopedViewSet` resolves
+the parent (404 when unknown), narrows `get_queryset()` before any filter, and
+attaches it on create, so the serializer has no `pharmacy_id` field. The
+routes are laid out by `sub_resource()` in `pharmacy/urls.py`, not the router.
+A read-only child list (`nested_list`) and a sub-resource are different
+things; use the former when the child has its own top-level resource.
+
+**`is_active` is not soft delete.** An inactive staff member has left but
+stays resolvable because records name them; `DELETE` is for rows that should
+never have existed. `PharmacyLocation.pharmacist_in_charge` is the board
+designation, validated when set and never inferred from anything else.
 
 **Identifiers are normalized on the way in**, in `validators.py`: an NPI must
 carry a valid Luhn check digit, an NDC in any segmented form is stored as 11

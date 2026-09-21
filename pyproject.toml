@@ -23,6 +23,10 @@ dev = [
     "pytest-django>=4.14.0",
     "factory-boy>=3.3.3",
     "ruff>=0.16.8",
+    # Embedded PostgreSQL for running the suite on a host with no Postgres.
+    # Opt-in through PHARMACY_TEST_DB=embedded in pharmacy/tests/conftest.py;
+    # Compose and CI keep using the real server in DATABASE_URL.
+    "pgserver>=0.1.4",
 ]
 
 [tool.ruff]

@@ -8,7 +8,7 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.utils import timezone
 
-from pharmacy.models import Pharmacy, PharmacyLocation, Prescriber, Prescription
+from pharmacy.models import Pharmacy, PharmacyLocation, Prescriber, Prescription, Staff
 from pharmacy.validators import validate_npi
 
 
@@ -90,12 +90,14 @@ class TestSeedLocal:
             first = (
                 Pharmacy.objects.count(),
                 PharmacyLocation.objects.count(),
+                Staff.objects.count(),
                 Prescription.objects.count(),
             )
             call_command("seed_local")
             second = (
                 Pharmacy.objects.count(),
                 PharmacyLocation.objects.count(),
+                Staff.objects.count(),
                 Prescription.objects.count(),
             )
         assert first == second
@@ -122,6 +124,18 @@ class TestSeedLocal:
             validate_npi(npi)
         for npi in PharmacyLocation.objects.exclude(npi="").values_list("npi", flat=True):
             validate_npi(npi)
+        for npi in Staff.objects.exclude(npi="").values_list("npi", flat=True):
+            validate_npi(npi)
+        for staff in Staff.objects.all():
+            staff.full_clean()
+
+    def test_seeds_a_pharmacist_in_charge(self):
+        with environment(DJANGO_ENV="local", SEED_DEMO_DATA="true"):
+            call_command("seed_local")
+        designated = PharmacyLocation.objects.exclude(pharmacist_in_charge=None)
+        assert designated.exists()
+        for location in designated:
+            location.full_clean()
 
     def test_seeds_both_pharmacy_shapes(self):
         with environment(DJANGO_ENV="local", SEED_DEMO_DATA="true"):

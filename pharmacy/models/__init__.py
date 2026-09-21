@@ -18,11 +18,21 @@ from .prescription import (
     Prescription,
     PrescriptionStatus,
 )
+from .staff import (
+    ROLES_REQUIRING_CERTIFICATION,
+    ROLES_REQUIRING_REGISTRATION,
+    CertificationBody,
+    Staff,
+    StaffRole,
+)
 
 __all__ = [
     "ALLOWED_TRANSITIONS",
+    "ROLES_REQUIRING_CERTIFICATION",
+    "ROLES_REQUIRING_REGISTRATION",
     "TERMINAL_STATUSES",
     "Address",
+    "CertificationBody",
     "Gender",
     "LocationType",
     "Medication",
@@ -34,5 +44,7 @@ __all__ = [
     "Prescriber",
     "Prescription",
     "PrescriptionStatus",
+    "Staff",
+    "StaffRole",
     "TimeStampedModel",
 ]

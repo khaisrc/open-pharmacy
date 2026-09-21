@@ -25,6 +25,8 @@ from pharmacy.models import (
     Prescriber,
     Prescription,
     PrescriptionStatus,
+    Staff,
+    StaffRole,
 )
 
 
@@ -118,6 +120,73 @@ class Command(BaseCommand):
                     "phone_number": "+16075550" + ncpdp[:3],
                 },
             )[0]
+
+        # One pharmacist per pharmacy, designated PIC of its first store, plus
+        # a technician of each kind, so every registration rule is visible
+        # from a plain boot. Registered staff are keyed on the registration;
+        # the unregistered technician on name and employer, the only identity
+        # such a record has.
+        staff = {}
+        for key, (first, last, role, state, number, body, cert, npi, pharm) in {
+            "ortiz": (
+                "Elena",
+                "Ortiz",
+                StaffRole.PHARMACIST,
+                "NY",
+                "RPH.023417",
+                "",
+                "",
+                "1356728844",
+                corner,
+            ),
+            "walsh": (
+                "Brendan",
+                "Walsh",
+                StaffRole.PHARMACIST,
+                "NY",
+                "RPH.031205",
+                "",
+                "",
+                "1205849874",
+                chain,
+            ),
+            "kim": (
+                "Soo-jin",
+                "Kim",
+                StaffRole.CERTIFIED_TECHNICIAN,
+                "NY",
+                "RPT.118902",
+                "PTCB",
+                "10021987",
+                "",
+                chain,
+            ),
+            "diaz": ("Marco", "Diaz", StaffRole.TECHNICIAN, "", "", "", "", "", corner),
+        }.items():
+            lookup = (
+                {"registration_state": state, "registration_number": number}
+                if number
+                else {"first_name": first, "last_name": last, "pharmacy": pharm}
+            )
+            staff[key] = Staff.objects.get_or_create(
+                **lookup,
+                defaults={
+                    "first_name": first,
+                    "last_name": last,
+                    "role": role,
+                    "registration_state": state,
+                    "registration_number": number,
+                    "certification_body": body,
+                    "certification_number": cert,
+                    "npi": npi,
+                    "pharmacy": pharm,
+                },
+            )[0]
+
+        for loc, pic in (("corner", "ortiz"), ("north_a", "walsh")):
+            if locations[loc].pharmacist_in_charge_id is None:
+                locations[loc].pharmacist_in_charge = staff[pic]
+                locations[loc].save(update_fields=["pharmacist_in_charge", "updated_at"])
 
         medications = {}
         for key, (name, ndc, strength, form) in {
@@ -240,6 +309,7 @@ class Command(BaseCommand):
             self.style.SUCCESS(
                 f"Demo data ready: {Pharmacy.objects.count()} pharmacies, "
                 f"{PharmacyLocation.objects.count()} locations, "
+                f"{Staff.objects.count()} staff, "
                 f"{Prescription.objects.count()} prescriptions."
             )
         )
