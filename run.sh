@@ -226,26 +226,53 @@ BAR_W=20
 term_cols="$(tput cols 2>/dev/null || echo 80)"
 [[ $(( NAME_W + BAR_W + 22 )) -gt "$term_cols" ]] && BAR_W=10
 
+# Bar glyphs. A terminal outside a UTF-8 locale renders these as mojibake, so
+# fall back to ASCII there rather than to something worse than the numbers.
+# locale(1) resolves LC_ALL/LC_CTYPE/LANG the way the terminal itself does.
+BAR_FILL='#'; BAR_EDGE='-'; BAR_REST='-'; RULE_CH='-'
+case "$(locale charmap 2>/dev/null)" in
+  UTF-8|utf-8|UTF8|utf8) BAR_FILL='━'; BAR_EDGE='╺'; BAR_REST='━'; RULE_CH='─' ;;
+esac
+
 _expected() { # _expected CASE -- assertions it made last run, 0 if unknown
   [[ -f "$BASELINE" ]] || { echo 0; return; }
   awk -F'\t' -v c="$1" '$1 == c { print $2; found = 1 } END { if (!found) print 0 }' \
     "$BASELINE" 2>/dev/null || echo 0
 }
 
-_bar() { # _bar DONE TOTAL WIDTH
-  local done="$1" total="$2" width="$3" filled i out=""
+# _bar DONE TOTAL WIDTH [FILL_COLOUR] -- the filled run in FILL_COLOUR and the
+# remainder dim, parted by a half-width glyph so the leading edge reads as an
+# edge rather than as a colour change.
+_bar() {
+  local done="$1" total="$2" width="$3" fill_c="${4:-}" filled i out=""
   if [[ "$total" -le 0 ]]; then filled=0; else filled=$(( done * width / total )); fi
   [[ $filled -gt $width ]] && filled=$width
   [[ $filled -lt 0 ]] && filled=0
-  for (( i = 0; i < width; i++ )); do
-    if [[ $i -lt $filled ]]; then out+="#"; else out+="-"; fi
-  done
+  if [[ $filled -gt 0 ]]; then
+    out+="$fill_c"
+    for (( i = 0; i < filled; i++ )); do out+="$BAR_FILL"; done
+    out+="$c_off"
+  fi
+  if [[ $filled -lt $width ]]; then
+    out+="$c_dim"
+    if [[ $filled -gt 0 ]]; then
+      # The edge glyph marks where the fill stops. An empty bar has no fill to
+      # mark the end of, and an edge there reads as a unit of progress.
+      out+="$BAR_EDGE"
+      for (( i = filled + 1; i < width; i++ )); do out+="$BAR_REST"; done
+    else
+      for (( i = 0; i < width; i++ )); do out+="$BAR_REST"; done
+    fi
+    out+="$c_off"
+  fi
   printf '%s' "$out"
 }
 
-# PASS/FAIL tallies for one case, read straight from its event log. grep on a
-# file a case is still appending to is safe: a torn final line only undercounts
-# by one, for one frame.
+_rule() { # _rule WIDTH
+  local width="$1" i out=""
+  for (( i = 0; i < width; i++ )); do out+="$RULE_CH"; done
+  printf '%s%s%s' "$c_dim" "$out" "$c_off"
+}
 _tally() { # _tally EVENTFILE PATTERN
   local n
   [[ -f "$1" ]] || { echo 0; return; }
@@ -254,7 +281,8 @@ _tally() { # _tally EVENTFILE PATTERN
 }
 
 _draw() { # _draw [FIRST] -- prints exactly $PROGRESS_LINES lines
-  local first="${1:-0}" case_file name ev passed failed expect done_files=0 tp=0 tf=0 el mins secs
+  local first="${1:-0}" case_file name ev passed failed expect fill
+  local done_files=0 tp=0 tf=0 el mins secs
   [[ "$first" -eq 1 ]] || printf '\033[%dA' "$PROGRESS_LINES"
   printf '\033[2K\n'
   for case_file in "${files[@]}"; do
@@ -264,26 +292,29 @@ _draw() { # _draw [FIRST] -- prints exactly $PROGRESS_LINES lines
     failed="$(_tally "$ev" '"outcome":"FAIL"')"
     expect="$(_expected "$name")"
     tp=$(( tp + passed )); tf=$(( tf + failed ))
+    # A case that has already failed goes red as it runs, rather than looking
+    # healthy until the moment it finishes.
+    if [[ "$failed" -gt 0 ]]; then fill="$c_red"; else fill="$c_green"; fi
     printf '\033[2K  %-*s ' "$NAME_W" "$name"
     if [[ -f "$RESULT_DIR/done.${name}" ]]; then
       done_files=$(( done_files + 1 ))
       if [[ "$failed" -gt 0 ]]; then
-        printf '%s%s%s  %s%d failed%s\n' \
-          "$c_red" "$(_bar 1 1 "$BAR_W")" "$c_off" "$c_red" "$failed" "$c_off"
+        printf '%s  %s%d failed%s\n' "$(_bar 1 1 "$BAR_W" "$c_red")" \
+          "$c_red" "$failed" "$c_off"
       else
-        printf '%s%s%s  %d ok\n' "$c_green" "$(_bar 1 1 "$BAR_W")" "$c_off" "$passed"
+        printf '%s  %d ok\n' "$(_bar 1 1 "$BAR_W" "$c_green")" "$passed"
       fi
     elif [[ -f "$ev" ]]; then
-      printf '%s  %d' "$(_bar $(( passed + failed )) "$expect" "$BAR_W")" \
+      printf '%s  %d' "$(_bar $(( passed + failed )) "$expect" "$BAR_W" "$fill")" \
         "$(( passed + failed ))"
       [[ "$expect" -gt 0 ]] && printf '/%d' "$expect"
       printf '\n'
     else
-      printf '%s%s  %spending%s\n' "$c_dim" "$(_bar 0 1 "$BAR_W")" "$c_dim" "$c_off"
+      printf '%s  %spending%s\n' "$(_bar 0 1 "$BAR_W")" "$c_dim" "$c_off"
     fi
   done
   el=$(( $(date +%s) - started )); mins=$(( el / 60 )); secs=$(( el % 60 ))
-  printf '\033[2K  %s\n' "$(_bar 0 1 $(( NAME_W + BAR_W + 18 )) | tr '-' '_')"
+  printf '\033[2K  %s\n' "$(_rule $(( NAME_W + BAR_W + 18 )))"
   printf '\033[2K  %s%d/%d files%s   %d passed  %d failed   %d:%02d\n' \
     "$c_bold" "$done_files" "${#files[@]}" "$c_off" "$tp" "$tf" "$mins" "$secs"
 }

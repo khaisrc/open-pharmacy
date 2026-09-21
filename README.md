@@ -95,6 +95,11 @@ front, since cases loop over collections and `-f` changes the set, so the
 first run of a case shows a plain count and every run after it has a real
 denominator.
 
+A bar is green while a case is passing and turns red the moment one of its
+assertions fails, rather than looking healthy until the case ends. The glyphs
+are box-drawing characters; outside a UTF-8 locale (`locale charmap`) they
+fall back to ASCII.
+
 Redirect stdout, as CI does, and the per-assertion lines come back with no
 escape sequences in them. `-v` and `NO_COLOR` also turn the display off, as
 does a terminal too short to hold the block without scrolling.
