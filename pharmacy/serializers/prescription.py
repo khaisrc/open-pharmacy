@@ -17,6 +17,24 @@ from .pharmacy_location import PharmacyLocationSummarySerializer
 from .prescriber import PrescriberSummarySerializer
 
 
+# A status a client cannot PATCH is not necessarily a status it cannot reach --
+# it just does not get there through this endpoint. Each refusal carries the
+# route that does own the transition, so a client is not left guessing.
+TRANSITION_HINTS = {
+    PrescriptionStatus.CANCELLED: (
+        "POST /prescriptions/{id}/cancel/ is what cancels a prescription."
+    ),
+    PrescriptionStatus.COMPLETED: (
+        "A prescription completes on its own when POST /prescriptions/{id}/fill/ "
+        "uses the last authorized fill."
+    ),
+    PrescriptionStatus.EXPIRED: (
+        "A prescription expires on its own once expires_at has passed; the next "
+        "POST /prescriptions/{id}/fill/ records it."
+    ),
+}
+
+
 class PrescriptionSerializer(serializers.ModelSerializer):
     """Writes flat, reads nested, so rendering one prescription is one request."""
 
@@ -89,9 +107,18 @@ class PrescriptionSerializer(serializers.ModelSerializer):
                     "message": f"Cannot move a prescription from '{current}' to '{value}'.",
                     "current_status": current,
                     "allowed_targets": sorted(allowed),
+                    "hint": self._transition_hint(current, value, allowed),
                 }
             )
         return value
+
+    @staticmethod
+    def _transition_hint(current, target, allowed):
+        if target in TRANSITION_HINTS:
+            return TRANSITION_HINTS[target]
+        if not allowed:
+            return f"A '{current}' prescription is terminal; its status no longer changes."
+        return f"From '{current}' this endpoint can set only: {', '.join(sorted(allowed))}."
 
     def _home_pharmacy_location(self):
         """The dispensing site to use when a client names none.

@@ -63,7 +63,7 @@ class PharmacyLocationSerializer(serializers.ModelSerializer):
                 details={
                     "field": "ncpdp_id",
                     "ncpdp_id": normalized,
-                    "pharmacy_location_id": str(conflict.pk),
+                    "existing_id": str(conflict.pk),
                 },
             )
         return normalized
@@ -79,7 +79,7 @@ class PharmacyLocationSerializer(serializers.ModelSerializer):
         if conflict:
             raise Conflict(
                 "A live pharmacy location with this NPI already exists.",
-                details={"field": "npi", "npi": value, "pharmacy_location_id": str(conflict.pk)},
+                details={"field": "npi", "npi": value, "existing_id": str(conflict.pk)},
             )
         return value
 
@@ -99,7 +99,7 @@ class PharmacyLocationSerializer(serializers.ModelSerializer):
                     details={
                         "field": "store_number",
                         "store_number": store_number,
-                        "pharmacy_location_id": str(conflict.pk),
+                        "existing_id": str(conflict.pk),
                     },
                 )
         return attrs
