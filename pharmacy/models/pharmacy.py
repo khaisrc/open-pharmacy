@@ -23,7 +23,6 @@ class Pharmacy(TimeStampedModel):
     class Meta(TimeStampedModel.Meta):
         abstract = False
         verbose_name_plural = "pharmacies"
-        indexes = [models.Index(fields=["name"])]
 
     def __str__(self):
         return self.name

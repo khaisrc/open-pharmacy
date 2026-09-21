@@ -61,10 +61,9 @@ class PharmacyLocation(TimeStampedModel):
                 name="uniq_live_store_number_per_pharmacy",
             ),
         ]
-        indexes = [
-            models.Index(fields=["pharmacy"]),
-            models.Index(fields=["ncpdp_id"]),
-        ]
+        # The FK already carries its own index. ncpdp_id needs one here because
+        # the unique constraint above is partial and covers live rows only.
+        indexes = [models.Index(fields=["ncpdp_id"])]
 
     def save(self, *args, **kwargs):
         self.ncpdp_id = normalize_ncpdp(self.ncpdp_id)
