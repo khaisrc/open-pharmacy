@@ -219,7 +219,7 @@ wheels = [
 ]
 
 [[package]]
-name = "pharmacy-ops"
+name = "open-pharmacy"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

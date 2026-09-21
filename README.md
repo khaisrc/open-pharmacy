@@ -1,4 +1,4 @@
-# pharmacy-ops
+# open-pharmacy
 
 A REST API over the pharmacy domain — prescriptions, and the patients,
 prescribers, medications, pharmacies and addresses they reference.
@@ -6,7 +6,7 @@ prescribers, medications, pharmacies and addresses they reference.
 ## Quickstart
 
 ```bash
-git clone <repo> && cd pharmacy-ops
+git clone <repo> && cd open-pharmacy
 docker compose up
 ```
 
@@ -41,7 +41,7 @@ docker compose run --rm web ruff format .
 docker compose run --rm web python manage.py makemigrations
 docker compose run --rm web python manage.py seed_local
 docker compose run --rm web python manage.py spectacular --fail-on-warn
-docker compose exec db psql -U pharmacy pharmacy_ops
+docker compose exec db psql -U pharmacy open_pharmacy
 ```
 
 `docker compose run --rm web …` starts the database first and removes the
