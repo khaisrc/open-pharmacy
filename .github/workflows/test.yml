@@ -1,0 +1,55 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Compose is what a developer runs, so CI runs the same thing: one
+      # definition of the environment, and the image that ships is the image
+      # the tests ran in. `run` starts the db service and waits on its
+      # healthcheck; the entrypoint only migrates and seeds for the server, so
+      # pytest gets a clean database and builds its own.
+      - name: Build the image
+        run: docker compose build web
+
+      - name: Run the test suite
+        run: docker compose run --rm -T web python -m pytest -q
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker compose build web
+
+      - name: ruff check
+        run: docker compose run --rm -T web ruff check .
+
+      - name: ruff format
+        run: docker compose run --rm -T web ruff format --check .
+
+      # A model edited without its migration passes every test and then fails
+      # on deploy, so the check belongs in CI rather than in review.
+      - name: Every model change has a migration
+        run: docker compose run --rm -T web python manage.py makemigrations --check --dry-run
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v
