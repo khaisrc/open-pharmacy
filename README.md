@@ -3,7 +3,7 @@
 A curl-driven test framework, shared across API test suites. `run.sh`, `lib/`
 and `bin/` are the reusable part: request/assertion primitives, an HTML +
 JUnit reporter, and a runner that knows nothing about any particular API.
-A **suite** is a directory alongside them — `pharmacy-ops/` today — holding
+A **suite** is a directory alongside them — `open-pharmacy/` today — holding
 its own `cases/*.sh` and a `suite.env` describing how to reach that API.
 Nothing is imported from any service, so a suite exercises its API the way a
 client would.
@@ -22,11 +22,11 @@ With one suite directory present, `run.sh` finds it on its own. With more than
 one, pick it explicitly:
 
 ```bash
-./run.sh -s pharmacy-ops
+./run.sh -s open-pharmacy
 ```
 
 The API must be up. If it is not, `run.sh` prints that suite's `DEV_HINT`
-(for `pharmacy-ops`, `cd ../pharmacy-ops && ./scripts/dev.sh`).
+(for `open-pharmacy`, `cd ../open-pharmacy && ./scripts/dev.sh`).
 
 Options:
 
@@ -54,7 +54,7 @@ Configuration comes from the environment:
 | `JOBS` | same as `-p` (`8`) |
 
 ```bash
-BASE_URL=https://staging.example.com API_PASS=hunter2 ./run.sh -s pharmacy-ops
+BASE_URL=https://staging.example.com API_PASS=hunter2 ./run.sh -s open-pharmacy
 ```
 
 `run.sh` exits non-zero if anything failed, so it drops into CI unchanged.
@@ -77,7 +77,7 @@ longest case file takes about that long run entirely on its own, so raising
 `-p` past the number of case files changes nothing.
 
 The limit worth knowing is not the worker count but the API's rate limit.
-`pharmacy-ops` throttles an authenticated user to 1000 requests a minute and
+`open-pharmacy` throttles an authenticated user to 1000 requests a minute and
 one full run makes about 250, so a single run is never close -- but five runs
 inside the same minute are, and the tail of the fifth comes back 429. At one
 worker a run takes long enough that this cannot happen; at eight it can, if
@@ -132,7 +132,7 @@ A suite is a directory containing:
   ```bash
   HEALTH_PATH="/api/v1/health/"     # GET this must return 200 before anything runs
   AUTH_PROBE_PATH="/api/v1/patients/" # GET this with API_USER/API_PASS must return 200
-  DEV_HINT="cd ../pharmacy-ops && ./scripts/dev.sh"  # printed if either check fails
+  DEV_HINT="cd ../open-pharmacy && ./scripts/dev.sh"  # printed if either check fails
   # API_ROOT="${BASE_URL}/api/v1"   # optional: overrides lib/http.sh's default
   ```
 
@@ -147,11 +147,11 @@ A suite is a directory containing:
 `report.html` and `junit.xml` default to living inside the suite directory,
 and the report's title comes from the suite name (`-s`/`SUITE_NAME`).
 
-## The `pharmacy-ops` suite
+## The `open-pharmacy` suite
 
 The rest of this document — the fixture and generator conventions, the report
 layout, and the case list — describes the one suite in this repo today,
-`pharmacy-ops/`. A second suite would document itself the same way, in its own
+`open-pharmacy/`. A second suite would document itself the same way, in its own
 `<suite>/README.md`, once one exists.
 
 ### Why it can be run repeatedly
@@ -162,7 +162,7 @@ three rules the suite follows.
 **Every unique value is generated per run.** `medications.ndc` and
 `prescribers.npi` are unique among *live* rows. The suite does not clean up
 after itself, so a hard-coded NDC would pass the first time and 409 forever
-after. `pharmacy-ops/lib/gen.sh` mints a fresh NDC and NPI on every call —
+after. `open-pharmacy/lib/gen.sh` mints a fresh NDC and NPI on every call —
 including a valid NPI check digit, since a random ten-digit string is
 rejected — on top of the phone number and email the framework's own
 `lib/gen.sh` already mints generically. Both draw from `/dev/urandom` rather
@@ -184,7 +184,7 @@ patients, prescribers and prescriptions per run, all named with a `qa<pid>` tag
 so they are recognisable. To start clean:
 
 ```bash
-cd ../pharmacy-ops && docker compose down -v && ./scripts/dev.sh
+cd ../open-pharmacy && docker compose down -v && ./scripts/dev.sh
 ```
 
 ### The report
@@ -274,7 +274,7 @@ binds safely instead of being spliced into the filter:
 assert_jq 'any(.results[]; .id == $id)' "it is listed" --arg id "$ID"
 ```
 
-`pharmacy-ops/lib/fixtures.sh` builds records — `make_address`,
+`open-pharmacy/lib/fixtures.sh` builds records — `make_address`,
 `make_medication`, `make_patient`, `make_prescriber`, `make_prescription`, and
 `make_cast` for all four at once. Each sets `$NEW_ID` rather than echoing, so
 that a failure during
