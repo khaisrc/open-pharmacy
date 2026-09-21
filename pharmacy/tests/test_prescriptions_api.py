@@ -72,7 +72,7 @@ class TestFill:
         rx = PrescriptionFactory(status=status)
         response = api.post(f"{URL}{rx.pk}/fill/")
         assert response.status_code == 409
-        assert response.data["error"]["code"] == "conflict"
+        assert response.data["error"]["code"] == "not_active"
 
     def test_fill_after_expiry_sets_expired_and_409s(self, api):
         now = timezone.now()
@@ -83,12 +83,15 @@ class TestFill:
         )
         response = api.post(f"{URL}{rx.pk}/fill/")
         assert response.status_code == 409
+        assert response.data["error"]["code"] == "expired"
         rx.refresh_from_db()
         assert rx.status == PrescriptionStatus.EXPIRED
 
     def test_fill_exhausted_is_409(self, api):
         rx = PrescriptionFactory(status=PrescriptionStatus.ACTIVE, fills_authorized=1, fills_used=1)
-        assert api.post(f"{URL}{rx.pk}/fill/").status_code == 409
+        response = api.post(f"{URL}{rx.pk}/fill/")
+        assert response.status_code == 409
+        assert response.data["error"]["code"] == "no_fills_remaining"
 
 
 class TestCancel:
@@ -105,7 +108,9 @@ class TestCancel:
     )
     def test_cancel_on_terminal_is_409(self, api, status):
         rx = PrescriptionFactory(status=status)
-        assert api.post(f"{URL}{rx.pk}/cancel/").status_code == 409
+        response = api.post(f"{URL}{rx.pk}/cancel/")
+        assert response.status_code == 409
+        assert response.data["error"]["code"] == "already_terminal"
 
 
 class TestDeleteVersusCancel:

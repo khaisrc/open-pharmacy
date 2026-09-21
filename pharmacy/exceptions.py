@@ -35,6 +35,17 @@ def _envelope(code, message, details):
     return {"error": {"code": code, "message": message, "details": details or {}}}
 
 
+def _code(exc):
+    """The code this raise site passed, falling back to the class default.
+
+    APIException stores the `code=` argument on `exc.detail`, not on the
+    instance, so reading `default_code` alone would flatten every Conflict to
+    "conflict" no matter what the raise site asked for. A ValidationError's
+    detail is a dict or list and carries no code, so it falls through.
+    """
+    return getattr(exc.detail, "code", None) or getattr(exc, "default_code", "error")
+
+
 def exception_handler(exc, context):
     """Flatten every error into {"error": {code, message, details}}.
 
@@ -55,6 +66,7 @@ def exception_handler(exc, context):
         referencing = sorted({obj._meta.verbose_name for obj in exc.protected_objects})
         exc = Conflict(
             "Cannot delete a record that other records still reference.",
+            code="referenced",
             details={"referenced_by": referencing},
         )
 
@@ -64,6 +76,7 @@ def exception_handler(exc, context):
             if name in text:
                 exc = Conflict(
                     f"A live record with this {field} already exists.",
+                    code=f"duplicate_{field}",
                     details={"field": field, "constraint": name},
                 )
                 break
@@ -73,11 +86,11 @@ def exception_handler(exc, context):
         return None
 
     if isinstance(exc, Conflict):
-        response.data = _envelope("conflict", str(exc.detail), getattr(exc, "details", {}))
+        response.data = _envelope(_code(exc), str(exc.detail), getattr(exc, "details", {}))
         return response
 
     detail = response.data
-    code = getattr(exc, "default_code", "error")
+    code = _code(exc)
     if isinstance(detail, dict) and "detail" in detail:
         response.data = _envelope(code, str(detail["detail"]), {})
     elif isinstance(detail, dict):

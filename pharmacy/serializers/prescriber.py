@@ -54,6 +54,7 @@ class PrescriberSerializer(serializers.ModelSerializer):
         if conflict:
             raise Conflict(
                 "A live prescriber with this NPI already exists.",
+                code="duplicate_npi",
                 details={"field": "npi", "npi": value, "existing_id": str(conflict.pk)},
             )
         return value

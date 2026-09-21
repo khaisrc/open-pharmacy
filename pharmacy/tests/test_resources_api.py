@@ -108,6 +108,7 @@ class TestPrescribers:
             format="json",
         )
         assert response.status_code == 409
+        assert response.data["error"]["code"] == "duplicate_npi"
         assert response.data["error"]["details"]["field"] == "npi"
 
     def test_unknown_practitioner_type_is_400(self, api):
@@ -138,6 +139,7 @@ class TestMedications:
         existing = MedicationFactory(ndc="00002821501")
         response = api.post(self.URL, {"name": "Copy", "ndc": "0002-8215-01"}, format="json")
         assert response.status_code == 409
+        assert response.data["error"]["code"] == "duplicate_ndc"
         assert response.data["error"]["details"]["existing_id"] == str(existing.pk)
 
     def test_segmented_ndc_normalized_on_create(self, api):
@@ -191,6 +193,7 @@ class TestAddresses:
         PatientFactory(address=shared)
         response = api.delete(f"{self.URL}{shared.pk}/")
         assert response.status_code == 409
+        assert response.data["error"]["code"] == "referenced"
         assert "patients" in response.data["error"]["details"]["referenced_by"]
 
     def test_one_address_may_be_shared(self, api):
