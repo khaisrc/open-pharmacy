@@ -156,6 +156,13 @@ SPECTACULAR_SETTINGS = {
     ],
 }
 
+# The pharmacy this deployment is the backend for, identified by its location's
+# NCPDP ID. A prescription written here is dispensed at that location, so the
+# API fills it in when a client does not name one. It is a setting rather than a
+# constant because the same code serves a different store in each environment.
+HOME_PHARMACY_LOCATION_NCPDP_ID = env.str("HOME_PHARMACY_LOCATION_NCPDP_ID", default="4417829")
+
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,

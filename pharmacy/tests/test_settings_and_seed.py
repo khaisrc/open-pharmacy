@@ -113,4 +113,7 @@ class TestSeedLocal:
     def test_skips_demo_data_when_not_requested(self):
         with environment(DJANGO_ENV="local", SEED_DEMO_DATA="false"):
             call_command("seed_local")
-        assert Pharmacy.objects.count() == 0
+        # Acme Pharmacy is reference data seeded by a migration, so it is the
+        # baseline rather than demo output; anything beyond it would be a record
+        # the command should not have created.
+        assert list(Pharmacy.objects.values_list("name", flat=True)) == ["Acme Pharmacy"]

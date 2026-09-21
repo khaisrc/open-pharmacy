@@ -1,3 +1,4 @@
+from django.conf import settings
 from rest_framework import serializers
 
 from pharmacy.models import (
@@ -35,8 +36,9 @@ class PrescriptionSerializer(serializers.ModelSerializer):
     pharmacy_location_id = serializers.PrimaryKeyRelatedField(
         source="pharmacy_location",
         queryset=PharmacyLocation.objects.all(),
+        # Optional on the wire, not in the database: validate() substitutes the
+        # home pharmacy location when a client leaves it out.
         required=False,
-        allow_null=True,
         write_only=True,
     )
     fills_remaining = serializers.IntegerField(read_only=True)
@@ -91,7 +93,34 @@ class PrescriptionSerializer(serializers.ModelSerializer):
             )
         return value
 
+    def _home_pharmacy_location(self):
+        """The dispensing site to use when a client names none.
+
+        This service backs a single pharmacy, so a prescription written through
+        it is dispensed at that pharmacy's location and a client should not have
+        to say so. The location is read from HOME_PHARMACY_LOCATION_NCPDP_ID
+        rather than inferred from "whichever one exists", so a second store
+        opening -- or a test creating its own location -- cannot change which
+        site a prescription is written against.
+        """
+        return PharmacyLocation.objects.filter(
+            ncpdp_id=settings.HOME_PHARMACY_LOCATION_NCPDP_ID
+        ).first()
+
     def validate(self, attrs):
+        if self.instance is None and attrs.get("pharmacy_location") is None:
+            location = self._home_pharmacy_location()
+            if location is None:
+                raise serializers.ValidationError(
+                    {
+                        "pharmacy_location_id": (
+                            "This prescription names no dispensing site and the "
+                            "configured home pharmacy location was not found."
+                        )
+                    }
+                )
+            attrs["pharmacy_location"] = location
+
         written_at = attrs.get("written_at") or getattr(self.instance, "written_at", None)
         expires_at = attrs.get("expires_at", getattr(self.instance, "expires_at", None))
         if written_at and expires_at and expires_at <= written_at:
