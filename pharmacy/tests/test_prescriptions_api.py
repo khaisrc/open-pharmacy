@@ -164,3 +164,38 @@ class TestWriteAndRead:
             api.get(f"{URL}?page_size=10")
 
         assert len(large_page) == len(small_page)
+
+
+class TestQuantityAndFillsArePositive:
+    """PositiveIntegerField permits zero, so both fields carry MinValueValidator(1)."""
+
+    @pytest.mark.parametrize("field", ["quantity", "fills_authorized"])
+    def test_zero_is_rejected(self, api, patient, prescriber, medication, location, field):
+        payload = {
+            "patient_id": str(patient.pk),
+            "prescriber_id": str(prescriber.pk),
+            "medication_id": str(medication.pk),
+            "pharmacy_location_id": str(location.pk),
+            "dose_amount": "1 tablet",
+            "quantity": 30,
+        }
+        payload[field] = 0
+        response = api.post(URL, payload, format="json")
+        assert response.status_code == 400
+        assert field in response.data["error"]["details"]
+
+    def test_one_is_accepted(self, api, patient, prescriber, medication, location):
+        response = api.post(
+            URL,
+            {
+                "patient_id": str(patient.pk),
+                "prescriber_id": str(prescriber.pk),
+                "medication_id": str(medication.pk),
+                "pharmacy_location_id": str(location.pk),
+                "dose_amount": "1 tablet",
+                "quantity": 1,
+                "fills_authorized": 1,
+            },
+            format="json",
+        )
+        assert response.status_code == 201

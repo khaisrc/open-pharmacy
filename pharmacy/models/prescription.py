@@ -1,3 +1,4 @@
+from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
 
@@ -47,8 +48,12 @@ class Prescription(TimeStampedModel):
         related_name="prescriptions",
     )
     dose_amount = models.CharField(max_length=100)
-    quantity = models.PositiveIntegerField()
-    fills_authorized = models.PositiveIntegerField(default=1)
+    # PositiveIntegerField is Django's name for non-negative, so both of these
+    # need the validator to be the positive integers the model intends: a
+    # prescription is written for at least one unit and authorizes at least the
+    # original fill. fills_used is genuinely non-negative and keeps the default.
+    quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    fills_authorized = models.PositiveIntegerField(default=1, validators=[MinValueValidator(1)])
     fills_used = models.PositiveIntegerField(default=0)
     instructions = models.TextField(blank=True)
     status = models.CharField(
