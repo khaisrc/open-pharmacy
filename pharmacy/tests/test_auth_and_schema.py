@@ -40,6 +40,20 @@ class TestAuthentication:
         assert response.status_code == 200
 
 
+class TestNotFound:
+    """DRF converts Http404 to NotFound inside its own handler, where our
+    handler cannot see it, so the conversion has to happen in ours or every
+    404 reports the fallback code."""
+
+    MISSING = "00000000-0000-4000-8000-000000000000"
+
+    @pytest.mark.parametrize("url", PROTECTED)
+    def test_unknown_id_reports_not_found(self, api, url):
+        response = api.get(f"{url}{self.MISSING}/")
+        assert response.status_code == 404
+        assert response.data["error"]["code"] == "not_found"
+
+
 class TestSchema:
     @pytest.fixture
     def schema(self):

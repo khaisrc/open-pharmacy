@@ -1,9 +1,12 @@
 """One error shape for the whole API, and the 409 that blocked writes raise."""
 
+from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.db.models import ProtectedError
 from django.db.utils import IntegrityError
+from django.http import Http404
 from rest_framework import status
-from rest_framework.exceptions import APIException
+from rest_framework.exceptions import APIException, NotFound
+from rest_framework.exceptions import PermissionDenied as DRFPermissionDenied
 from rest_framework.views import exception_handler as drf_exception_handler
 
 # Maps a violated constraint name to the field a client should look at.
@@ -39,6 +42,15 @@ def exception_handler(exc, context):
     serializer would have raised, so a concurrent create is a conflict rather
     than a 500.
     """
+    # DRF converts these two itself, but only to a local name inside its own
+    # handler, so the `exc` we still hold below would be the Django exception --
+    # which carries no default_code, and every 404 would report "error". Convert
+    # them here instead, the way ProtectedError and IntegrityError are.
+    if isinstance(exc, Http404):
+        exc = NotFound(*exc.args)
+    elif isinstance(exc, DjangoPermissionDenied):
+        exc = DRFPermissionDenied(*exc.args)
+
     if isinstance(exc, ProtectedError):
         referencing = sorted({obj._meta.verbose_name for obj in exc.protected_objects})
         exc = Conflict(
