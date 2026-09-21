@@ -70,9 +70,9 @@ class PrescriptionSerializer(serializers.ModelSerializer):
 
     def validate_status(self, value):
         if self.instance is None:
-            if value != PrescriptionStatus.DRAFT:
+            if value != PrescriptionStatus.ACTIVE:
                 raise serializers.ValidationError(
-                    f"A new prescription starts as '{PrescriptionStatus.DRAFT}'."
+                    f"A new prescription starts as '{PrescriptionStatus.ACTIVE}'."
                 )
             return value
 

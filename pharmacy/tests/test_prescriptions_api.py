@@ -15,7 +15,6 @@ class TestStatusLifecycle:
     @pytest.mark.parametrize(
         "start,target",
         [
-            (PrescriptionStatus.DRAFT, PrescriptionStatus.ACTIVE),
             (PrescriptionStatus.ACTIVE, PrescriptionStatus.ON_HOLD),
             (PrescriptionStatus.ON_HOLD, PrescriptionStatus.ACTIVE),
         ],
@@ -29,8 +28,6 @@ class TestStatusLifecycle:
     @pytest.mark.parametrize(
         "start,target",
         [
-            (PrescriptionStatus.DRAFT, PrescriptionStatus.COMPLETED),
-            (PrescriptionStatus.DRAFT, PrescriptionStatus.ON_HOLD),
             (PrescriptionStatus.ACTIVE, PrescriptionStatus.CANCELLED),
             (PrescriptionStatus.ACTIVE, PrescriptionStatus.EXPIRED),
             (PrescriptionStatus.COMPLETED, PrescriptionStatus.ACTIVE),
@@ -65,7 +62,6 @@ class TestFill:
     @pytest.mark.parametrize(
         "status",
         [
-            PrescriptionStatus.DRAFT,
             PrescriptionStatus.ON_HOLD,
             PrescriptionStatus.COMPLETED,
             PrescriptionStatus.CANCELLED,

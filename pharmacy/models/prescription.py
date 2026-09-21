@@ -5,7 +5,6 @@ from .base import TimeStampedModel
 
 
 class PrescriptionStatus(models.TextChoices):
-    DRAFT = "draft", "Draft"
     ACTIVE = "active", "Active"
     ON_HOLD = "on_hold", "On hold"
     COMPLETED = "completed", "Completed"
@@ -21,7 +20,6 @@ TERMINAL_STATUSES = frozenset(
 # expired are never writable directly: cancel has its own action, and the other
 # two are set by the fill path.
 ALLOWED_TRANSITIONS = {
-    PrescriptionStatus.DRAFT: {PrescriptionStatus.ACTIVE},
     PrescriptionStatus.ACTIVE: {PrescriptionStatus.ON_HOLD},
     PrescriptionStatus.ON_HOLD: {PrescriptionStatus.ACTIVE},
     PrescriptionStatus.COMPLETED: set(),
@@ -54,7 +52,7 @@ class Prescription(TimeStampedModel):
     fills_used = models.PositiveIntegerField(default=0)
     instructions = models.TextField(blank=True)
     status = models.CharField(
-        max_length=16, choices=PrescriptionStatus.choices, default=PrescriptionStatus.DRAFT
+        max_length=16, choices=PrescriptionStatus.choices, default=PrescriptionStatus.ACTIVE
     )
     written_at = models.DateTimeField(default=timezone.now)
     expires_at = models.DateTimeField(null=True, blank=True)

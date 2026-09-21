@@ -92,5 +92,5 @@ class PrescriptionFactory(factory.django.DjangoModelFactory):
     quantity = 30
     fills_authorized = 3
     fills_used = 0
-    status = PrescriptionStatus.DRAFT
+    status = PrescriptionStatus.ACTIVE
     written_at = factory.LazyFunction(timezone.now)
