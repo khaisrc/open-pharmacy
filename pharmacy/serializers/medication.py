@@ -39,7 +39,7 @@ class MedicationSerializer(serializers.ModelSerializer):
         if conflict:
             raise Conflict(
                 "A live medication with this NDC already exists.",
-                details={"field": "ndc", "ndc": normalized, "medication_id": str(conflict.pk)},
+                details={"field": "ndc", "ndc": normalized, "existing_id": str(conflict.pk)},
             )
         return normalized
 

@@ -138,7 +138,7 @@ class TestMedications:
         existing = MedicationFactory(ndc="00002821501")
         response = api.post(self.URL, {"name": "Copy", "ndc": "0002-8215-01"}, format="json")
         assert response.status_code == 409
-        assert response.data["error"]["details"]["medication_id"] == str(existing.pk)
+        assert response.data["error"]["details"]["existing_id"] == str(existing.pk)
 
     def test_segmented_ndc_normalized_on_create(self, api):
         response = api.post(self.URL, {"name": "Testazole", "ndc": "0002-8215-01"}, format="json")
