@@ -1,8 +1,9 @@
 # AGENTS.md
 
-Working notes for coding agents. `README.md` documents the API and the domain;
-this file covers how to run things and the conventions that are easy to violate.
-Where they disagree, the code wins.
+Working notes for coding agents. `docs/` documents the API and the domain, and
+`README.md` is the overview that links to it; this file covers how to run things
+and the conventions that are easy to violate. Where they disagree, the code wins.
+New long-form documentation belongs in `docs/`, not in the README.
 
 ## Running commands
 
