@@ -1,9 +1,28 @@
 # open-pharmacy
 
-A REST API for one pharmacy's prescriptions and the records they reference:
-patients, prescribers, medications, pharmacies, their dispensing locations and
-addresses. Django + Django REST Framework on PostgreSQL 18, packaged as a single
-container.
+A reference implementation of the backend for a US pharmacy. It is a REST API
+over prescriptions and the records they reference: patients, prescribers,
+medications, pharmacies, their dispensing locations and addresses. Django +
+Django REST Framework on PostgreSQL 18, packaged as a single container.
+
+Being a reference implementation means the domain is modelled the way the US
+pharmacy ecosystem identifies things, not the way a generic CRUD app would:
+
+- Prescribers and dispensing sites carry an **NPI**, validated against the
+  check-digit scheme, so a typo cannot propagate into a claim.
+- Medications are keyed by **NDC**, accepted in any of the four segmented
+  forms and normalized to the 11-digit HIPAA layout.
+- Dispensing sites are keyed by **NCPDP ID** (the pharmacy number on a claim)
+  and may carry a **DEA number**; store numbers are unique per chain, not
+  globally.
+- Addresses are US postal addresses with USPS state codes and 5 or 9 digit ZIP
+  codes; phone numbers are E.164.
+- The deployment serves **one pharmacy**: a prescription written without a
+  dispensing site is routed to the configured home location.
+
+It is a starting point to build on rather than a product. Authorization, an
+external identity provider, dispense events and allergies are among the things
+deliberately left for later; see `plans/`.
 
 ## Quickstart
 
