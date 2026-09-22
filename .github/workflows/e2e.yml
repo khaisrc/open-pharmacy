@@ -14,7 +14,11 @@ concurrency:
 jobs:
   e2e:
     runs-on: ubuntu-latest
+    # Listing any scope here zeroes every other one, contents included --
+    # checkout needs contents: read to clone at all, so it has to be named
+    # even though this job never writes to the repo itself.
     permissions:
+      contents: read
       # The comment step below posts through the Issues API (a PR's
       # conversation comments live there, not under Pull Requests), which is
       # what this scope actually gates.
