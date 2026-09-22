@@ -33,7 +33,9 @@ PostgreSQL 18 and is what CI runs. The variable is read only in
 it exists.
 
 Before handing work back, run the four things CI runs: `pytest`, `ruff check .`,
-`ruff format --check .`, and `makemigrations --check --dry-run`.
+`ruff format --check .`, and `makemigrations --check --dry-run`. If the
+change touches API behavior, run the e2e suite too: `docker compose up -d` and
+then `./e2e/run.sh` from the host.
 
 Dependencies are managed with `uv` and pinned in `uv.lock`. Add one by editing
 `pyproject.toml` and running `uv lock`, then `docker compose up --build`.
@@ -49,6 +51,7 @@ pharmacy/filters.py    every list filterset
 pharmacy/validators.py NPI check digit, NDC and NCPDP normalization
 pharmacy/exceptions.py the error envelope and every 409
 pharmacy/tests/        factories.py and conftest.py fixtures, then one module per area
+e2e/                   curl-driven black-box suite; bash and curl, no imports from pharmacy/
 plans/                 design documents, some unimplemented; the code is the source of truth
 ```
 
@@ -130,11 +133,18 @@ actions carry `@extend_schema`. `spectacular --fail-on-warn` must pass.
 ## Tests
 
 `pytest-django` with `DJANGO_SETTINGS_MODULE=config.settings.local`. Modules set
-`pytestmark = pytest.mark.django_db` and group cases in classes by behaviour.
+`pytestmark = pytest.mark.django_db` and group cases in classes by behavior.
 Build data with the factories in `pharmacy/tests/factories.py` and the fixtures
 in `conftest.py` (`api` is an authenticated client, `anon` is not) rather than
 creating models inline. Prefer `@pytest.mark.parametrize` over near-duplicate
 tests. A refused write is tested on the status code *and* the error `code`.
+
+The `e2e/` suite is the other half and is written in bash, not Python. It runs
+against a served stack over real HTTP, so it is where authentication, the error
+envelope on the wire and the rate limiter are actually exercised. It never
+imports from `pharmacy/` and never cleans up after itself, which is why every
+unique value it sends is generated per run. `e2e/README.md` has the conventions;
+follow them rather than inventing a second style there.
 
 ## Style
 

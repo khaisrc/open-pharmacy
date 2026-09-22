@@ -5,16 +5,17 @@ on:
     branches: [main]
   pull_request:
 
-# A second push to the same branch makes the first run's answer irrelevant.
+# Cancel superseded runs on branches, but not on main: every commit to main
+# gets its own run, so we don't miss a regression.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Compose is what a developer runs, so CI runs the same thing: one
       # definition of the environment, and the image that ships is the image
@@ -34,7 +35,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build the image
         run: docker compose build web
