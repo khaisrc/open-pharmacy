@@ -1,4 +1,4 @@
-.PHONY: run reset e2e units
+.PHONY: run reset e2e units lint
 
 # Bring up the full stack: db, migrate, web.
 run:
@@ -19,3 +19,8 @@ e2e:
 # Django test suite, run inside the Compose web container (see AGENTS.md).
 units:
 	docker compose run --rm web pytest
+
+# ruff check and format, the other two things CI runs (see AGENTS.md).
+lint:
+	docker compose run --rm web ruff check .
+	docker compose run --rm web ruff format --check .
