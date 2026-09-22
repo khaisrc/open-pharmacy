@@ -10,12 +10,14 @@ section "create"
 when "a prescription is written for that patient"
 req POST /prescriptions/ "$(jq -nc --arg p "$FX_PATIENT" --arg d "$FX_PRESCRIBER" --arg m "$FX_MEDICATION" '{
   patient_id: $p, prescriber_id: $d, medication_id: $m,
+  prescription_origin_code: "provider",
   dose_amount: "1 tablet", quantity: 30, fills_authorized: 3,
   instructions: "Take one tablet by mouth daily.", notes: "Suite fixture." }')"
 assert_status 201 "the prescription is created"
 assert_jq '.id | test("^[0-9a-f-]{36}$")' "it has a UUID id"
 assert_jq_eq '.status' 'active' "it starts active"
-assert_jq_eq '.fills_used' '0' "it has no fills used"
+assert_jq '.fills_used == 0' "it has no fills used"
+assert_jq_eq '.prescription_origin_code' 'provider' "the origin code round-trips"
 assert_jq_eq '.fills_authorized' '3' "fills_authorized round-trips"
 assert_jq_eq '.dose_amount' '1 tablet' "dose_amount round-trips"
 assert_jq 'has("written_at") and (.written_at != null)' "written_at defaults to now"
@@ -38,22 +40,25 @@ assert_jq '.prescriber | has("npi") and has("practitioner_type")' \
 
 when "a prescription is written without saying how many fills it allows"
 req POST /prescriptions/ "$(jq -nc --arg p "$FX_PATIENT" --arg d "$FX_PRESCRIBER" --arg m "$FX_MEDICATION" '{
-  patient_id: $p, prescriber_id: $d, medication_id: $m, dose_amount: "2 tablets", quantity: 60 }')"
+  patient_id: $p, prescriber_id: $d, medication_id: $m, prescription_origin_code: "provider",
+  dose_amount: "2 tablets", quantity: 60 }')"
 assert_status 201 "it is created"
 assert_jq_eq '.fills_authorized' '1' "fills_authorized defaults to a single fill"
 
 section "the status a prescription may be created in"
 mk_with_status() {
   req POST /prescriptions/ "$(jq -nc --arg p "$FX_PATIENT" --arg d "$FX_PRESCRIBER" --arg m "$FX_MEDICATION" --arg s "$1" '{
-    patient_id: $p, prescriber_id: $d, medication_id: $m, dose_amount: "1 tablet", quantity: 30, status: $s }')"
+    patient_id: $p, prescriber_id: $d, medication_id: $m, prescription_origin_code: "provider",
+    dose_amount: "1 tablet", quantity: 30, status: $s }')"
 }
 
 when "a prescription is written explicitly active"
 mk_with_status "active"
 assert_status 201 "it is created"
 
-# completed, cancelled and expired are reached through /fill/ and /cancel/, so
-# a client cannot post its way straight into a terminal state.
+# completed is reached by dispensing the last authorized unit and cancelled
+# through /cancel/, so a client cannot post its way straight into a terminal
+# state.
 for terminal in completed cancelled expired; do
   when "a prescription is written already '${terminal}'"
   mk_with_status "$terminal"
@@ -71,36 +76,40 @@ assert_status 400 "it is rejected"
 
 section "validation"
 when "a prescription is written naming no patient, prescriber or medication"
-req POST /prescriptions/ '{"dose_amount":"1 tablet","quantity":30}'
+req POST /prescriptions/ '{"prescription_origin_code":"provider","dose_amount":"1 tablet","quantity":30}'
 assert_status 400 "the three foreign keys are required"
 assert_jq '.error.details | has("patient_id") and has("prescriber_id") and has("medication_id")' \
   "the error names every missing foreign key"
 
 when "a prescription is written for a patient who does not exist"
 req POST /prescriptions/ "$(jq -nc --arg p "$MISSING_UUID" --arg d "$FX_PRESCRIBER" --arg m "$FX_MEDICATION" '{
-  patient_id: $p, prescriber_id: $d, medication_id: $m, dose_amount: "1 tablet", quantity: 30 }')"
+  patient_id: $p, prescriber_id: $d, medication_id: $m, prescription_origin_code: "provider",
+  dose_amount: "1 tablet", quantity: 30 }')"
 assert_status 400 "it is rejected"
 
 when "a prescription is written with no dose"
 req POST /prescriptions/ "$(jq -nc --arg p "$FX_PATIENT" --arg d "$FX_PRESCRIBER" --arg m "$FX_MEDICATION" '{
-  patient_id: $p, prescriber_id: $d, medication_id: $m, quantity: 30 }')"
+  patient_id: $p, prescriber_id: $d, medication_id: $m, prescription_origin_code: "provider",
+  quantity: 30 }')"
 assert_status 400 "dose_amount is required"
 
 when "a prescription is written for a quantity of zero"
 req POST /prescriptions/ "$(jq -nc --arg p "$FX_PATIENT" --arg d "$FX_PRESCRIBER" --arg m "$FX_MEDICATION" '{
-  patient_id: $p, prescriber_id: $d, medication_id: $m, dose_amount: "1 tablet", quantity: 0 }')"
+  patient_id: $p, prescriber_id: $d, medication_id: $m, prescription_origin_code: "provider",
+  dose_amount: "1 tablet", quantity: 0 }')"
 assert_status 400 "it is rejected"
 
 when "a prescription is written authorising zero fills"
 req POST /prescriptions/ "$(jq -nc --arg p "$FX_PATIENT" --arg d "$FX_PRESCRIBER" --arg m "$FX_MEDICATION" '{
-  patient_id: $p, prescriber_id: $d, medication_id: $m, dose_amount: "1 tablet", quantity: 30, fills_authorized: 0 }')"
+  patient_id: $p, prescriber_id: $d, medication_id: $m, prescription_origin_code: "provider",
+  dose_amount: "1 tablet", quantity: 30, fills_authorized: 0 }')"
 assert_status 400 "it is rejected"
 
 when "a prescription is written to expire before it was written"
 req POST /prescriptions/ "$(jq -nc --arg p "$FX_PATIENT" --arg d "$FX_PRESCRIBER" --arg m "$FX_MEDICATION" \
   --arg w "$(iso_days -1)" --arg e "$(iso_days -30)" '{
-  patient_id: $p, prescriber_id: $d, medication_id: $m, dose_amount: "1 tablet", quantity: 30,
-  written_at: $w, expires_at: $e }')"
+  patient_id: $p, prescriber_id: $d, medication_id: $m, prescription_origin_code: "provider",
+  dose_amount: "1 tablet", quantity: 30, written_at: $w, expires_at: $e }')"
 assert_status 400 "it is rejected"
 assert_jq '.error.details.expires_at | length > 0' "the error names the expires_at field"
 
@@ -116,12 +125,12 @@ assert_status 200 "the prescription is updated"
 assert_jq_eq '.notes' 'Patched by the suite.' "the patched notes took effect"
 assert_jq_eq '.dose_amount' '1 tablet' "the other fields are untouched"
 
-# fills_used moves only through POST /fill/. If a PATCH could set it, a client
-# could route around the status changes that action owns.
+# fills_used is derived from the fills, so there is no field to patch. If a
+# PATCH could set it, a client could route around the workflow that owns it.
 when "a client tries to patch fills_used directly"
 req PATCH "/prescriptions/${RX}/" '{"fills_used":99}'
 assert_status 200 "the update is accepted"
-assert_jq_eq '.fills_used' '0' "fills_used did not move"
+assert_jq '.fills_used == 0' "fills_used did not move"
 
 when "a client tries to patch the id"
 req PATCH "/prescriptions/${RX}/" '{"id":"11111111-1111-4111-8111-111111111111"}'
@@ -134,7 +143,8 @@ assert_status 400 "it is rejected here too"
 
 when "the prescription is replaced"
 req PUT "/prescriptions/${RX}/" "$(jq -nc --arg p "$FX_PATIENT" --arg d "$FX_PRESCRIBER" --arg m "$FX_MEDICATION" '{
-  patient_id: $p, prescriber_id: $d, medication_id: $m, dose_amount: "3 tablets", quantity: 90 }')"
+  patient_id: $p, prescriber_id: $d, medication_id: $m, prescription_origin_code: "provider",
+  dose_amount: "3 tablets", quantity: 90 }')"
 assert_status 200 "the prescription is replaced"
 assert_jq_eq '.dose_amount' '3 tablets' "the new dose_amount took effect"
 

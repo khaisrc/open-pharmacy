@@ -141,7 +141,8 @@ Both are written by `bin/report.py`, which `run.sh` shells out to as `python3` o
 | `cases/30_patients.sh` | CRUD, E.164 and date-of-birth validation, nested address, `/patients/{id}/prescriptions/` |
 | `cases/40_prescribers.sh` | CRUD, NPI check digit, duplicate-NPI conflict, `/prescribers/{id}/prescriptions/` |
 | `cases/50_prescriptions.sh` | CRUD, nested summaries, read-only fields, which statuses a client may set |
-| `cases/60_lifecycle.sh` | `/fill/` and `/cancel/`: completion, refusals, lazy expiry |
+| `cases/60_lifecycle.sh` | what a prescription's status does: completion, `/cancel/`, refusals, lazy expiry |
+| `cases/65_fills.sh` | the dispensing workflow: a technician starts a fill, a pharmacist verifies and completes it, whole and partial, and the totals each one leaves behind |
 | `cases/70_query.sh` | pagination, ordering, filters, search |
 | `cases/80_pharmacies.sh` | CRUD, `location_count`, delete blocked while stores or staff reference it |
 | `cases/85_pharmacy_locations.sh` | locations as a sub-resource of their pharmacy: CRUD, NCPDP and store-number uniqueness, the pharmacist-in-charge, `{id}/prescriptions/` |
@@ -171,13 +172,13 @@ assert_jq_eq '.state' 'OR' "state round-trips"
 
 Write each assertion as the rest of its Then: the keyword and the When above it are already on the line, so `"the address is created"` reads as a step where `"POST /addresses/ creates an address"` would repeat both.
 
-`req METHOD PATH [JSON]` sends an authenticated request and leaves the result in `$STATUS` and `$BODY`; `req_anon` and `req_as USER PASS` are the unauthenticated and explicit-credential versions. The assertions are `assert_status`, `assert_status_in`, `assert_jq`, `assert_jq_eq`, `assert_eq` and `assert_error_code`. `assert_jq` passes trailing arguments to `jq`, so a value binds safely instead of being spliced into the filter:
+`req METHOD PATH [JSON]` sends an authenticated request and leaves the result in `$STATUS` and `$BODY`; `req_anon` and `req_as USER PASS` are the unauthenticated and explicit-credential versions. `req_staff STAFF_ID METHOD PATH [JSON]` adds the `X-Staff-Id` header, which is how a write names the person performing it -- the fill workflow refuses without one, and the credentials say which client is calling, not who is at the counter. The assertions are `assert_status`, `assert_status_in`, `assert_jq`, `assert_jq_eq`, `assert_eq` and `assert_error_code`. `assert_jq` passes trailing arguments to `jq`, so a value binds safely instead of being spliced into the filter:
 
 ```bash
 assert_jq 'any(.results[]; .id == $id)' "it is listed" --arg id "$ID"
 ```
 
-`lib/fixtures.sh` builds records — `make_address`, `make_medication`, `make_patient`, `make_prescriber`, `make_prescription`, `make_pharmacy`, `make_location` and `make_staff`, plus `make_cast` and `make_store` for a whole set at once. Each sets `$NEW_ID` rather than echoing, so that a failure during setup can stop the file; calling one as `$(make_patient)` would run it in a subshell where that cannot work. A failed fixture is reported as a setup failure, not as a test failure.
+`lib/fixtures.sh` builds records — `make_address`, `make_medication`, `make_patient`, `make_prescriber`, `make_prescription`, `make_pharmacy`, `make_location` and `make_staff`, plus `make_cast`, `make_store` and `make_dispensing_team` for a whole set at once. `make_dispensed_fill` is the one that is a workflow rather than a record: it starts a fill, verifies it and completes it, which is what moves a prescription's totals. Each sets `$NEW_ID` rather than echoing, so that a failure during setup can stop the file; calling one as `$(make_patient)` would run it in a subshell where that cannot work. A failed fixture is reported as a setup failure, not as a test failure.
 
 Each is also a Given step, announcing what it leaves behind rather than the requests it takes to get there — `make_cast` prints one `Given` line, not four. Setup a case does inline, outside a fixture builder, says so the same way:
 

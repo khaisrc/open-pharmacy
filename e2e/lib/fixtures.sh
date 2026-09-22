@@ -108,6 +108,7 @@ _make_prescription() {
     patient_id: $p,
     prescriber_id: $d,
     medication_id: $m,
+    prescription_origin_code: "provider",
     dose_amount: "1 tablet",
     quantity: 30,
     fills_authorized: 1,
@@ -206,6 +207,42 @@ _make_staff() {
   req POST "/pharmacies/${pharmacy}/staff/" "$payload"
   [[ "$STATUS" == "201" ]] || die "could not create staff member"
   NEW_ID="$(jqv .id)"
+}
+
+# The two people the fill workflow needs, and the pharmacy that employs them.
+# A technician starts a fill and only a pharmacist may verify it, so a case
+# that dispenses anything needs both. Sets FX_PHARMACY, FX_PHARMACIST and
+# FX_TECHNICIAN.
+FX_PHARMACIST=""; FX_TECHNICIAN=""
+make_dispensing_team() { given "a pharmacy with a pharmacist and a technician exists" _make_dispensing_team "$@"; }
+_make_dispensing_team() {
+  make_pharmacy;                                  FX_PHARMACY="$NEW_ID"
+  make_staff "$FX_PHARMACY";                      FX_PHARMACIST="$NEW_ID"
+  make_staff "$FX_PHARMACY" '{"role":"technician"}'; FX_TECHNICIAN="$NEW_ID"
+}
+
+# make_dispensed_fill PRESCRIPTION_ID OPERATOR_ID PHARMACIST_ID [overrides_json]
+#
+# One fill all the way to completed: the technician starts it, the pharmacist
+# verifies it, and completing it is what moves the prescription's totals. With
+# no overrides the service dispenses one written fill's worth, or whatever is
+# left of the authorized quantity.
+#
+# Three requests folded into one Given, because a case that is about what the
+# prescription looks like afterwards should not have to narrate the workflow
+# each time. A case that is about the workflow itself writes the three out.
+make_dispensed_fill() { given "a fill is dispensed" _make_dispensed_fill "$@"; }
+_make_dispensed_fill() {
+  local prescription="$1" operator="$2" pharmacist="$3" overrides="${4:-}"
+  [[ -n "$overrides" ]] || overrides='{}'
+  req_staff "$operator" POST "/prescriptions/${prescription}/fills/" "$overrides"
+  [[ "$STATUS" == "201" ]] || die "could not start a fill"
+  local fill; fill="$(jqv .id)"
+  req_staff "$pharmacist" POST "/fills/${fill}/verify/"
+  [[ "$STATUS" == "200" ]] || die "could not verify the fill"
+  req_staff "$pharmacist" POST "/fills/${fill}/complete/"
+  [[ "$STATUS" == "200" ]] || die "could not complete the fill"
+  NEW_ID="$fill"
 }
 
 # A pharmacy with one address and one location, for tests about what hangs off

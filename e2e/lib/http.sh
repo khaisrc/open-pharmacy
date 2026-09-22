@@ -36,6 +36,8 @@ LAST_SENT=""
 LAST_METHOD=""
 LAST_URL=""
 LAST_AUTH="none"
+LAST_STAFF=""
+_STAFF_ID=""
 LAST_MS="0"
 CURRENT_SECTION=""
 _REQ_SEQ=0
@@ -180,6 +182,8 @@ _curl() {
   LAST_METHOD="$method"
   LAST_URL="$url"
   LAST_AUTH="$auth_label"
+  LAST_STAFF="$_STAFF_ID"
+  _STAFF_ID=""
   _REQ_SEQ=$(( _REQ_SEQ + 1 ))
 
   _emit_request
@@ -210,6 +214,19 @@ req_as() {
   _curl "Basic ${u}" "$1" "$2" "${3-}" -u "${u}:${p}"
 }
 
+# Request attributed to a staff member: req_staff STAFF_ID METHOD PATH [JSON_BODY]
+#
+# X-Staff-Id is how a write names the person performing it, and the fill
+# workflow refuses without one. It is a request form rather than an argument to
+# req because the header is orthogonal to the credentials: the operator signs
+# in as the same API user whoever is at the counter.
+req_staff() {
+  local staff="$1"; shift
+  _STAFF_ID="$staff"
+  _when "$1 $2 as the named staff member"
+  _curl "Basic ${API_USER}" "$1" "$2" "${3-}" -u "${API_USER}:${API_PASS}" -H "X-Staff-Id: ${staff}"
+}
+
 # --- the event log -----------------------------------------------------------
 
 # Everything the report needs about the request that just finished. Bodies and
@@ -228,6 +245,7 @@ _emit_request() {
     --arg method "$LAST_METHOD" \
     --arg url "$LAST_URL" \
     --arg auth "$LAST_AUTH" \
+    --arg staff "$LAST_STAFF" \
     --arg reqbody "$LAST_SENT" \
     --arg status "$STATUS" \
     --arg seconds "$LAST_MS" \
@@ -241,6 +259,7 @@ _emit_request() {
         [["Accept", "application/json"]]
         + (if $reqbody == "" then [] else [["Content-Type", "application/json"]] end)
         + (if $auth == "none" then [] else [["Authorization", ($auth + " \u2039redacted\u203a")]] end)
+        + (if $staff == "" then [] else [["X-Staff-Id", $staff]] end)
       ),
       request_body: $reqbody,
       status: ($status | tonumber? // 0),
