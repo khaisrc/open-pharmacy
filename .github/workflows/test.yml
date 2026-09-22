@@ -14,6 +14,8 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
     steps:
       - uses: actions/checkout@v7
 
@@ -25,8 +27,23 @@ jobs:
       - name: Build the image
         run: docker compose build web
 
+      # --junitxml lands in the bind-mounted /app, so it is pytest-junit.xml
+      # on the runner afterward too -- same trick e2e/run.sh uses for its
+      # own report, and what the summary comment step below reads.
       - name: Run the test suite
-        run: docker compose run --rm -T web python -m pytest -q
+        run: docker compose run --rm -T web python -m pytest -q --junitxml=pytest-junit.xml
+
+      # Runs even if pytest failed, so the comment always reflects this run
+      # rather than going stale on a failure. Only on a PR: a push to main
+      # has no PR to comment on.
+      - name: Post summary comment
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 .github/scripts/junit_summary.py pytest-junit.xml test |
+            .github/scripts/pr_comment.sh test
 
       - name: Stop the stack
         if: always()
