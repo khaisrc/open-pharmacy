@@ -132,3 +132,89 @@ _make_cast() {
   make_patient "$FX_ADDRESS";      FX_PATIENT="$NEW_ID";    FX_PATIENT_LAST_NAME="$NEW_LAST_NAME"
   make_prescriber "$FX_ADDRESS";   FX_PRESCRIBER="$NEW_ID"
 }
+
+# make_pharmacy [overrides_json] -- also sets NEW_PHARMACY_NAME, unique per
+# call so a search or a name filter can scope itself to this one.
+NEW_PHARMACY_NAME=""
+make_pharmacy() { given "a pharmacy exists" _make_pharmacy "$@"; }
+_make_pharmacy() {
+  local overrides="${1:-}"; [[ -n "$overrides" ]] || overrides='{}'
+  NEW_PHARMACY_NAME="Testmart ${RUN_TAG}x$(_rand 1000000)"
+  local payload
+  payload="$(jq -nc --arg name "$NEW_PHARMACY_NAME" --arg phone "$(gen_phone)" \
+                   --arg email "$(gen_email)" --argjson o "$overrides" '{
+    name: $name,
+    legal_name: ($name + " LLC"),
+    phone_number: $phone,
+    email: $email
+  } * $o')"
+  req POST /pharmacies/ "$payload"
+  [[ "$STATUS" == "201" ]] || die "could not create pharmacy"
+  NEW_ID="$(jqv .id)"
+}
+
+# make_location PHARMACY_ID ADDRESS_ID [overrides_json]
+#
+# The pharmacy comes from the path, never the body: a location is a
+# sub-resource of the pharmacy that owns it. Also sets NEW_NCPDP and
+# NEW_STORE_NUMBER.
+NEW_NCPDP=""
+NEW_STORE_NUMBER=""
+make_location() { given "a pharmacy location exists" _make_location "$@"; }
+_make_location() {
+  local pharmacy="$1" address_id="$2" overrides="${3:-}"
+  [[ -n "$overrides" ]] || overrides='{}'
+  NEW_NCPDP="$(gen_ncpdp)"
+  NEW_STORE_NUMBER="$(printf '%05d' "$(_rand 100000)")"
+  local payload
+  payload="$(jq -nc --arg addr "$address_id" --arg ncpdp "$NEW_NCPDP" \
+                   --arg store "$NEW_STORE_NUMBER" --arg phone "$(gen_phone)" --argjson o "$overrides" '{
+    store_number: $store,
+    ncpdp_id: $ncpdp,
+    location_type: "retail",
+    phone_number: $phone,
+    address_id: $addr
+  } * $o')"
+  req POST "/pharmacies/${pharmacy}/locations/" "$payload"
+  [[ "$STATUS" == "201" ]] || die "could not create pharmacy location"
+  NEW_ID="$(jqv .id)"
+}
+
+# make_staff PHARMACY_ID [overrides_json]
+#
+# A registered pharmacist by default -- the role every other role is a
+# relaxation of, and the only one a location may name as its
+# pharmacist-in-charge. Also sets NEW_LAST_NAME, NEW_REGISTRATION and
+# NEW_REGISTRATION_STATE.
+NEW_REGISTRATION=""
+NEW_REGISTRATION_STATE=""
+make_staff() { given "a staff member exists" _make_staff "$@"; }
+_make_staff() {
+  local pharmacy="$1" overrides="${2:-}"; [[ -n "$overrides" ]] || overrides='{}'
+  NEW_LAST_NAME="Staffer-${RUN_TAG}x$(_rand 1000000)"
+  NEW_REGISTRATION="$(gen_registration)"
+  NEW_REGISTRATION_STATE="OR"
+  local payload
+  payload="$(jq -nc --arg last "$NEW_LAST_NAME" --arg reg "$NEW_REGISTRATION" \
+                   --arg state "$NEW_REGISTRATION_STATE" --argjson o "$overrides" '{
+    first_name: "Testila",
+    last_name: $last,
+    role: "pharmacist",
+    registration_state: $state,
+    registration_number: $reg
+  } * $o')"
+  req POST "/pharmacies/${pharmacy}/staff/" "$payload"
+  [[ "$STATUS" == "201" ]] || die "could not create staff member"
+  NEW_ID="$(jqv .id)"
+}
+
+# A pharmacy with one address and one location, for tests about what hangs off
+# a store rather than about building one. Sets FX_PHARMACY, FX_PHARMACY_ADDRESS
+# and FX_LOCATION.
+FX_PHARMACY=""; FX_PHARMACY_ADDRESS=""; FX_LOCATION=""
+make_store() { given "a pharmacy with one location exists" _make_store "$@"; }
+_make_store() {
+  make_pharmacy;                             FX_PHARMACY="$NEW_ID"
+  make_address;                              FX_PHARMACY_ADDRESS="$NEW_ID"
+  make_location "$FX_PHARMACY" "$FX_PHARMACY_ADDRESS"; FX_LOCATION="$NEW_ID"
+}

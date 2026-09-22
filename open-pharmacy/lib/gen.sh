@@ -49,3 +49,19 @@ ndc_display_form() {
   local d; d="$(ndc_digits "$1")"
   echo "${d:0:5}-${d:5:4}-${d:9:2}"
 }
+
+# --- NCPDP ID ----------------------------------------------------------------
+# Seven digits, unique among live locations. No check digit: the API validates
+# length and charset only, deliberately.
+gen_ncpdp() { printf '%07d' "$(_rand 10000000)"; }
+
+# --- state board registration ------------------------------------------------
+# A staff member's registration number is unique per state among live records,
+# and the API upper-cases it on write. Generated already upper-case so a
+# round-trip assertion reads as one, leaving the normalization test to say so
+# on purpose.
+gen_registration() { printf 'RPH%09d' "$(_rand 1000000000)"; }
+
+# A technician certification number: free text to the API, unique here only so
+# two fixtures never look like the same credential.
+gen_certification() { printf '%010d' "$(_rand 1000000000)"; }

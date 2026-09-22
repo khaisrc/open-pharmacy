@@ -184,9 +184,9 @@ three rules the suite follows.
 **Every unique value is generated per run.** `medications.ndc` and
 `prescribers.npi` are unique among *live* rows. The suite does not clean up
 after itself, so a hard-coded NDC would pass the first time and 409 forever
-after. `open-pharmacy/lib/gen.sh` mints a fresh NDC and NPI on every call —
-including a valid NPI check digit, since a random ten-digit string is
-rejected — on top of the phone number and email the framework's own
+after. `open-pharmacy/lib/gen.sh` mints a fresh NDC, NPI, NCPDP ID and state-board
+registration number on every call — including a valid NPI check digit, since
+a random ten-digit string is rejected — on top of the phone number and email the framework's own
 `lib/gen.sh` already mints generically. Both draw from `/dev/urandom` rather
 than `$RANDOM`, because this is bash 3.2 (the version macOS ships) where
 `$RANDOM` inside `$(...)` inherits the caller's seed and repeats.
@@ -268,6 +268,9 @@ beside it.
 | `cases/50_prescriptions.sh` | CRUD, nested summaries, read-only fields, which statuses a client may set |
 | `cases/60_lifecycle.sh` | `/fill/` and `/cancel/`: completion, refusals, lazy expiry |
 | `cases/70_query.sh` | pagination, ordering, filters, search |
+| `cases/80_pharmacies.sh` | CRUD, `location_count`, delete blocked while stores or staff reference it |
+| `cases/85_pharmacy_locations.sh` | locations as a sub-resource of their pharmacy: CRUD, NCPDP and store-number uniqueness, the pharmacist-in-charge, `{id}/prescriptions/` |
+| `cases/90_staff.sh` | CRUD, the four roles, state registration and technician certification, NPI, delete blocked while a location names them |
 
 `bin/report.py` renders the run; `lib/http.sh` writes the event log it reads.
 
@@ -313,8 +316,9 @@ assert_jq 'any(.results[]; .id == $id)' "it is listed" --arg id "$ID"
 ```
 
 `open-pharmacy/lib/fixtures.sh` builds records — `make_address`,
-`make_medication`, `make_patient`, `make_prescriber`, `make_prescription`, and
-`make_cast` for all four at once. Each sets `$NEW_ID` rather than echoing, so
+`make_medication`, `make_patient`, `make_prescriber`, `make_prescription`,
+`make_pharmacy`, `make_location` and `make_staff`, plus `make_cast` and
+`make_store` for a whole set at once. Each sets `$NEW_ID` rather than echoing, so
 that a failure during
 setup can stop the file; calling one as `$(make_patient)` would run it in a
 subshell where that cannot work. A failed fixture is reported as a setup
