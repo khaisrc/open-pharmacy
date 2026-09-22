@@ -5,6 +5,10 @@ services:
     # credentials the database was created with. (Compose's own ${...}
     # interpolation never reads env_file, only the shell and a `.env`.)
     env_file: .env.local
+    ports:
+      # Interpolated by Compose from the shell, not from .env.local:
+      #   DB_PORT=5433 docker compose up
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
