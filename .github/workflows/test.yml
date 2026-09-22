@@ -36,11 +36,16 @@ jobs:
       - name: Build the image
         run: docker compose build web
 
-      # --junitxml lands in the bind-mounted /app, so it is pytest-junit.xml
-      # on the runner afterward too -- same trick e2e/run.sh uses for its
-      # own report, and what the summary comment step below reads.
+      # --junitxml writes into the bind-mounted /app, which the runner owns as
+      # a different uid than the image's app user -- the same mismatch the
+      # lint job works around for ruff's cache, and pytest cannot create a
+      # file there. Creating it here first is enough: writing a file that
+      # already exists needs write on the file, not the right to add one to
+      # the directory. The report is what the summary comment step reads.
       - name: Run the test suite
-        run: docker compose run --rm -T web python -m pytest -q --junitxml=pytest-junit.xml
+        run: |
+          touch pytest-junit.xml && chmod 666 pytest-junit.xml
+          docker compose run --rm -T web python -m pytest -q --junitxml=pytest-junit.xml
 
       # Runs even if pytest failed, so the comment always reflects this run
       # rather than going stale on a failure. Only on a PR: a push to main

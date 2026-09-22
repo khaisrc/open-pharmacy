@@ -32,8 +32,10 @@ comments_url="repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments"
 existing_id="$(gh api "$comments_url" --paginate \
   --jq "[.[] | select(.body | startswith(\"${top_marker}\"))][0].id // empty")"
 
+# -F, not -f: only -F expands the @- that reads the body from stdin. -f takes
+# its value literally, which posts a comment whose entire text is "@-".
 if [[ -z "$existing_id" ]]; then
-  printf '%s\n\n%s\n' "$top_marker" "$block" | gh api "$comments_url" -f body=@- >/dev/null
+  printf '%s\n\n%s\n' "$top_marker" "$block" | gh api "$comments_url" -F body=@- >/dev/null
   exit 0
 fi
 
@@ -51,4 +53,4 @@ else
 fi
 
 printf '%s' "$new_body" |
-  gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing_id}" -f body=@- >/dev/null
+  gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing_id}" -F body=@- >/dev/null
