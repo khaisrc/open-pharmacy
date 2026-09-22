@@ -22,16 +22,40 @@ LIVE_UNIQUE_CONSTRAINTS = {
 }
 
 
-class Conflict(APIException):
+# Violations of a constraint that is not an identifier, mapped to the 409 the
+# service would have raised had it seen the row first: (message, code).
+CONSTRAINT_CONFLICTS = {
+    "uniq_live_fill_in_flight": (
+        "This prescription already has a fill in progress.",
+        "fill_in_progress",
+    ),
+}
+
+
+class ApiError(APIException):
+    """An error with a code of its own and structured details. Subclasses fix
+    the status; the raise site names the code."""
+
+    def __init__(self, detail=None, code=None, details=None):
+        super().__init__(detail, code)
+        self.details = details or {}
+
+
+class Conflict(ApiError):
     """409. Raised for blocked deletes, duplicates, refused fills and cancels."""
 
     status_code = status.HTTP_409_CONFLICT
     default_detail = "The request conflicts with the current state of the resource."
     default_code = "conflict"
 
-    def __init__(self, detail=None, code=None, details=None):
-        super().__init__(detail, code)
-        self.details = details or {}
+
+class InvalidRequest(ApiError):
+    """400 for a request that is malformed in a way no serializer field owns:
+    a bad X-Staff-Id header, a write that needs one and has none."""
+
+    status_code = status.HTTP_400_BAD_REQUEST
+    default_detail = "The request is invalid."
+    default_code = "invalid_request"
 
 
 def duplicate(record, field, label, value=None, existing=None, extra=None):
@@ -101,13 +125,17 @@ def exception_handler(exc, context):
             if name in text:
                 exc = duplicate(record, field, label)
                 break
+        for name, (message, code) in CONSTRAINT_CONFLICTS.items():
+            if name in text:
+                exc = Conflict(message, code=code)
+                break
 
     response = drf_exception_handler(exc, context)
     if response is None:
         return None
 
-    if isinstance(exc, Conflict):
-        response.data = _envelope(_code(exc), str(exc.detail), getattr(exc, "details", {}))
+    if isinstance(exc, ApiError):
+        response.data = _envelope(_code(exc), str(exc.detail), exc.details)
         return response
 
     detail = response.data

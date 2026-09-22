@@ -1,8 +1,8 @@
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework.decorators import action
 
+from pharmacy import repositories, services
 from pharmacy.filters import PharmacyLocationFilter
-from pharmacy.models import PharmacyLocation
 from pharmacy.serializers import PharmacyLocationSerializer, PrescriptionSerializer
 
 from .base import PharmacyScopedViewSet, nested_list
@@ -16,14 +16,12 @@ class PharmacyLocationViewSet(PharmacyScopedViewSet):
     prescriptions still go through /prescriptions/?pharmacy= and
     ?pharmacy_location=."""
 
-    queryset = PharmacyLocation.objects.select_related(
-        "pharmacy", "address", "pharmacist_in_charge"
-    )
+    repository = repositories.pharmacy_locations
+    service = services.pharmacy_locations
     serializer_class = PharmacyLocationSerializer
     filterset_class = PharmacyLocationFilter
     search_fields = ["store_number", "ncpdp_id"]
     ordering_fields = ["created_at", "store_number"]
-    protected_relations = (("prescriptions", "prescriptions"),)
 
     @extend_schema(
         summary="Prescriptions routed to this location",

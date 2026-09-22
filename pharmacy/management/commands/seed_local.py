@@ -8,6 +8,7 @@ a typo away from planting a known-password superuser in a deployed environment.
 import os
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
@@ -24,10 +25,17 @@ from pharmacy.models import (
     PractitionerType,
     Prescriber,
     Prescription,
+    PrescriptionOriginCode,
     PrescriptionStatus,
+    RxCounter,
     Staff,
     StaffRole,
 )
+
+# Where every local pharmacy's Rx numbers start. High enough that a number
+# never looks like a sequence position, and the same for every pharmacy so a
+# local label is obviously local.
+RX_COUNTER_START = 1_000_000_000
 
 
 class Command(BaseCommand):
@@ -100,6 +108,19 @@ class Command(BaseCommand):
                 "website": "https://northstar.example",
             },
         )
+
+        # A local pharmacy is onboarded as soon as it exists: without a
+        # seeded counter, creating a prescription at any of its stores is a
+        # 409 rx_counter_not_seeded. The home pharmacy (migration 0003's
+        # Acme row) gets one too. get_or_create, so a re-run never rewinds
+        # a counter that has since issued numbers.
+        home = PharmacyLocation.objects.filter(
+            ncpdp_id=settings.HOME_PHARMACY_LOCATION_NCPDP_ID
+        ).first()
+        for pharm in (corner, chain, *([home.pharmacy] if home else [])):
+            RxCounter.objects.get_or_create(
+                pharmacy=pharm, defaults={"last_issued": RX_COUNTER_START}
+            )
 
         locations = {}
         for key, (pharm, store, ncpdp, npi, addr, ltype, hours) in {
@@ -237,16 +258,24 @@ class Command(BaseCommand):
         # is the identity a re-run looks up. The key must not involve time: a
         # lookup on written_at would match nothing after a day and re-insert
         # all four on every later boot.
+        #
+        # The Rx numbers are written directly: this command is fixture data
+        # outside the service layer. They sit below RX_COUNTER_START so they
+        # can never collide with a number the counter issues. No fills are
+        # seeded, which is why the one terminal demo prescription is
+        # cancelled rather than completed: completed would claim a dispensing
+        # no fill row describes.
         demo_prescriptions = [
             (
                 "rivera",
                 "chen",
                 "lisinopril",
                 "north_a",
+                1001,
+                PrescriptionOriginCode.ELECTRONIC,
                 "1 tablet",
                 30,
                 6,
-                2,
                 PrescriptionStatus.ACTIVE,
                 "Take one tablet by mouth daily.",
             ),
@@ -255,10 +284,11 @@ class Command(BaseCommand):
                 "okafor",
                 "amoxicillin",
                 "north_a",
+                1002,
+                PrescriptionOriginCode.WRITTEN,
                 "1 capsule",
                 21,
                 1,
-                0,
                 PrescriptionStatus.ACTIVE,
                 "One capsule three times daily for 7 days.",
             ),
@@ -267,11 +297,12 @@ class Command(BaseCommand):
                 "chen",
                 "metformin",
                 "corner",
+                1,
+                PrescriptionOriginCode.TELEPHONE,
                 "2 tablets",
                 60,
                 3,
-                3,
-                PrescriptionStatus.COMPLETED,
+                PrescriptionStatus.CANCELLED,
                 "Two tablets with the evening meal.",
             ),
             (
@@ -279,25 +310,27 @@ class Command(BaseCommand):
                 "okafor",
                 "albuterol",
                 "north_c",
+                1003,
+                PrescriptionOriginCode.FACSIMILE,
                 "2 puffs",
                 1,
                 2,
-                0,
                 PrescriptionStatus.ACTIVE,
                 "Two puffs as needed.",
             ),
         ]
-        for pat, presc, med, loc, dose, qty, auth, used, stat, sig in demo_prescriptions:
+        for pat, presc, med, loc, rx, origin, dose, qty, auth, stat, sig in demo_prescriptions:
             Prescription.objects.get_or_create(
                 patient=patients[pat],
                 prescriber=prescribers[presc],
                 medication=medications[med],
                 defaults={
                     "pharmacy_location": locations[loc],
+                    "rx_number": rx,
+                    "prescription_origin_code": origin,
                     "dose_amount": dose,
                     "quantity": qty,
                     "fills_authorized": auth,
-                    "fills_used": used,
                     "status": stat,
                     "instructions": sig,
                     "written_at": now,
@@ -310,6 +343,7 @@ class Command(BaseCommand):
                 f"Demo data ready: {Pharmacy.objects.count()} pharmacies, "
                 f"{PharmacyLocation.objects.count()} locations, "
                 f"{Staff.objects.count()} staff, "
+                f"{RxCounter.objects.count()} Rx counters, "
                 f"{Prescription.objects.count()} prescriptions."
             )
         )

@@ -2,6 +2,7 @@ from django_filters import rest_framework as filters
 
 from .models import (
     Address,
+    Fill,
     Medication,
     Patient,
     Pharmacy,
@@ -91,3 +92,9 @@ class StaffFilter(filters.FilterSet):
             "certification_body",
             "npi",
         ]
+
+
+class FillFilter(filters.FilterSet):
+    class Meta:
+        model = Fill
+        fields = ["status", "operator", "verified_by"]

@@ -14,7 +14,9 @@ JWT and role design that replaces this is in [`plans/auth/plan.md`](../plans/aut
 
 | Path | What it is | Notes |
 |---|---|---|
-| `/prescriptions/` | A medication order for a patient | `fill/` and `cancel/` actions; see [prescriptions.md](prescriptions.md) |
+| `/prescriptions/` | A medication order for a patient | `cancel/` action; carries the Rx number and every quantity; see [prescriptions.md](prescriptions.md) |
+| `/prescriptions/{id}/fills/` | The dispensings of a prescription | list and create only |
+| `/fills/{id}/` | One dispensing | `GET`, `PATCH`; `pending → verified → completed` through `verify/`, `unverify/`, `complete/`, `cancel/`; no collection at `/fills/` |
 | `/patients/` | Who a prescription is written for | `{id}/prescriptions/` |
 | `/prescribers/` | Who wrote it, keyed by NPI | `{id}/prescriptions/` |
 | `/medications/` | What it names, keyed by NDC | NDC is normalized to 11 digits on write |
@@ -24,8 +26,14 @@ JWT and role design that replaces this is in [`plans/auth/plan.md`](../plans/aut
 | `/addresses/` | Postal addresses the records above share | |
 
 All resources support `GET` (list and detail), `POST`, `PATCH`, `PUT` and
-`DELETE`. Writes take flat ids (`patient_id`, `address_id`); reads return the
-nested object, so rendering a prescription is one request.
+`DELETE`, except fills, which have no `PUT`. Writes take flat ids
+(`patient_id`, `address_id`); reads return the nested object, so rendering a
+prescription is one request.
+
+Any write may carry an `X-Staff-Id` header naming the staff member performing
+it; a fill needs one. See [prescriptions.md](prescriptions.md). Every write
+is recorded column by column in a change-history table (old value, new value,
+login, staff member, request path and id), which has no API yet.
 
 ## Sub-resources
 
@@ -48,6 +56,7 @@ Every list is paginated: `?page=` and `?page_size=` (default 25, max 100), with
 | Resource | Filters | `?search=` | `?ordering=` |
 |---|---|---|---|
 | prescriptions | `patient`, `prescriber`, `medication`, `pharmacy_location`, `pharmacy`, `status`, `written_after`, `written_before` | medication name, patient last name | `written_at`, `created_at` |
+| prescriptions/{id}/fills | `status`, `operator`, `verified_by` | | `sequence`, `created_at` |
 | patients | `last_name`, `dob`, `sms_opt_in`, `gender` | first and last name | `created_at`, `last_name`, `dob` |
 | prescribers | `npi`, `practitioner_type` | name, NPI | `created_at`, `last_name` |
 | medications | `form` | | |

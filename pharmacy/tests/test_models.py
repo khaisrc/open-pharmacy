@@ -6,6 +6,7 @@ from django.utils import timezone
 from pharmacy.models import Medication, Patient, Prescriber, Prescription, Staff
 
 from .factories import (
+    FillFactory,
     MedicationFactory,
     PatientFactory,
     PharmacyLocationFactory,
@@ -19,16 +20,59 @@ pytestmark = pytest.mark.django_db
 
 
 class TestCheckConstraints:
-    def test_fills_used_cannot_exceed_authorized(self):
-        with pytest.raises(IntegrityError):
-            with transaction.atomic():
-                PrescriptionFactory(fills_authorized=2, fills_used=3)
-
     def test_expiry_must_follow_written_at(self):
         now = timezone.now()
         with pytest.raises(IntegrityError):
             with transaction.atomic():
                 PrescriptionFactory(written_at=now, expires_at=now - timezone.timedelta(days=1))
+
+
+class TestFillConstraints:
+    """What the database holds about a fill on its own: the shape of one row.
+    The totals across fills are rules in the service, not constraints."""
+
+    @pytest.mark.parametrize(
+        "shape",
+        [
+            {"quantity_dispensed": 0},
+            {"days_supply": 0},
+            # dispensed_at exists exactly when completed, verified_by exactly
+            # when verified or completed.
+            {"dispensed_at": timezone.now()},
+            {"completed": True, "dispensed_at": None},
+            {"verified_by": None, "status": "verified"},
+            {"verified": True, "status": "pending"},
+        ],
+        ids=[
+            "zero quantity",
+            "zero days",
+            "stamped pending",
+            "unstamped completed",
+            "unverified verified",
+            "verified pending",
+        ],
+    )
+    def test_row_shapes_the_constraints_refuse(self, shape):
+        with pytest.raises(IntegrityError):
+            with transaction.atomic():
+                FillFactory(**shape)
+
+    def test_sequence_is_unique_per_prescription(self, prescription):
+        FillFactory(prescription=prescription, sequence=1, completed=True)
+        with pytest.raises(IntegrityError):
+            with transaction.atomic():
+                FillFactory(prescription=prescription, sequence=1)
+
+    def test_one_fill_in_flight_per_prescription(self, prescription):
+        FillFactory(prescription=prescription)
+        with pytest.raises(IntegrityError):
+            with transaction.atomic():
+                FillFactory(prescription=prescription, verified=True)
+
+    def test_terminal_fills_do_not_block_a_new_one(self, prescription):
+        FillFactory(prescription=prescription, completed=True)
+        FillFactory(prescription=prescription, status="cancelled")
+        FillFactory(prescription=prescription)
 
 
 class TestPatientValidation:

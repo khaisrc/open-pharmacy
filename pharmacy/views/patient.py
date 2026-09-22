@@ -1,8 +1,8 @@
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework.decorators import action
 
+from pharmacy import repositories, services
 from pharmacy.filters import PatientFilter
-from pharmacy.models import Patient
 from pharmacy.serializers import PatientSerializer, PrescriptionSerializer
 
 from .base import SoftDeleteModelViewSet, nested_list
@@ -12,12 +12,12 @@ from .tags import tagged
 
 @extend_schema_view(**tagged("Patients", "prescriptions"))
 class PatientViewSet(SoftDeleteModelViewSet):
-    queryset = Patient.objects.select_related("address")
+    repository = repositories.patients
+    service = services.patients
     serializer_class = PatientSerializer
     filterset_class = PatientFilter
     search_fields = ["first_name", "last_name"]
     ordering_fields = ["created_at", "last_name", "dob"]
-    protected_relations = (("prescriptions", "prescriptions"),)
 
     @extend_schema(
         summary="Prescriptions written for this patient",

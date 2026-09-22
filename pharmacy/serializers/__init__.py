@@ -1,4 +1,5 @@
 from .address import AddressSerializer, AddressSummarySerializer
+from .fill import FillSerializer
 from .medication import MedicationSerializer, MedicationSummarySerializer
 from .patient import PatientSerializer, PatientSummarySerializer
 from .pharmacy import PharmacySerializer, PharmacySummarySerializer
@@ -10,6 +11,7 @@ from .staff import StaffSerializer, StaffSummarySerializer
 __all__ = [
     "AddressSerializer",
     "AddressSummarySerializer",
+    "FillSerializer",
     "MedicationSerializer",
     "MedicationSummarySerializer",
     "PatientSerializer",

@@ -3,13 +3,17 @@ from django.utils import timezone
 
 from pharmacy.models import (
     Address,
+    Fill,
+    FillStatus,
     Medication,
     Patient,
     Pharmacy,
     PharmacyLocation,
     Prescriber,
     Prescription,
+    PrescriptionOriginCode,
     PrescriptionStatus,
+    RxCounter,
     Staff,
     StaffRole,
 )
@@ -66,10 +70,27 @@ class MedicationFactory(factory.django.DjangoModelFactory):
 
 
 class PharmacyFactory(factory.django.DjangoModelFactory):
+    """Onboarded: the pharmacy comes with a seeded Rx counter, so a
+    prescription can be created against any of its stores through the API.
+    Pass rx_counter=None for one that has not been."""
+
     class Meta:
         model = Pharmacy
+        skip_postgeneration_save = True
 
     name = factory.Sequence(lambda n: f"Test Pharmacy {n}")
+    rx_counter = factory.RelatedFactory(
+        "pharmacy.tests.factories.RxCounterFactory", factory_related_name="pharmacy"
+    )
+
+
+class RxCounterFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = RxCounter
+
+    pharmacy = factory.SubFactory(PharmacyFactory, rx_counter=None)
+    last_issued = 0
+    step = 1
 
 
 class PharmacyLocationFactory(factory.django.DjangoModelFactory):
@@ -105,9 +126,39 @@ class PrescriptionFactory(factory.django.DjangoModelFactory):
     prescriber = factory.SubFactory(PrescriberFactory)
     medication = factory.SubFactory(MedicationFactory)
     pharmacy_location = factory.SubFactory(PharmacyLocationFactory)
+    # Through the ORM, not the service, so the number is the factory's own.
+    rx_number = factory.Sequence(lambda n: 100_000 + n)
+    prescription_origin_code = PrescriptionOriginCode.WRITTEN
     dose_amount = "1 tablet"
     quantity = 30
     fills_authorized = 3
-    fills_used = 0
     status = PrescriptionStatus.ACTIVE
     written_at = factory.LazyFunction(timezone.now)
+
+
+class FillFactory(factory.django.DjangoModelFactory):
+    """A pending fill of one written quantity at the prescription's location.
+    `completed=True` and `verified=True` are the other two shapes the
+    constraints allow."""
+
+    class Meta:
+        model = Fill
+
+    class Params:
+        verified = factory.Trait(
+            status=FillStatus.VERIFIED, verified_by=factory.SubFactory(StaffFactory)
+        )
+        completed = factory.Trait(
+            status=FillStatus.COMPLETED,
+            verified_by=factory.SubFactory(StaffFactory),
+            dispensed_at=factory.LazyFunction(timezone.now),
+        )
+
+    prescription = factory.SubFactory(PrescriptionFactory)
+    sequence = factory.LazyAttribute(
+        lambda o: Fill.all_objects.filter(prescription=o.prescription).count() + 1
+    )
+    pharmacy_location = factory.LazyAttribute(lambda o: o.prescription.pharmacy_location)
+    operator = factory.SubFactory(StaffFactory)
+    status = FillStatus.PENDING
+    quantity_dispensed = factory.LazyAttribute(lambda o: o.prescription.quantity)

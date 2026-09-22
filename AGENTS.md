@@ -13,7 +13,7 @@ the command in a throwaway container:
 
 ```bash
 docker compose run --rm web pytest
-docker compose run --rm web pytest pharmacy/tests/test_prescriptions_api.py -k fill
+docker compose run --rm web pytest pharmacy/tests/test_fills_api.py
 docker compose run --rm web ruff check .
 docker compose run --rm web ruff format .
 docker compose run --rm web python manage.py makemigrations
@@ -45,8 +45,10 @@ Dependencies are managed with `uv` and pinned in `uv.lock`. Add one by editing
 ```
 config/settings/       base.py, then local.py / uat.py / prod.py chosen by DJANGO_ENV
 pharmacy/models/       one module per model; UUID pk, timestamps, soft delete in base.py
+pharmacy/repositories/ same split; the only place a query is written (base.py: Repository)
+pharmacy/services/     same split; every write and every rule (base.py: CrudService)
 pharmacy/serializers/  same split; the live-duplicate check in base.py
-pharmacy/views/        same split; delete guards and nested routes in base.py
+pharmacy/views/        same split; adapters over the two above, nested routes in base.py
 pharmacy/filters.py    every list filterset
 pharmacy/validators.py NPI check digit, NDC and NCPDP normalization
 pharmacy/exceptions.py the error envelope and every 409
@@ -55,9 +57,10 @@ e2e/                   curl-driven black-box suite; bash and curl, no imports fr
 plans/                 design documents, some unimplemented; the code is the source of truth
 ```
 
-One module per model, and the same name across the three packages. A new
-resource means a matching file in `models/`, `serializers/` and `views/`, a
-filterset in `filters.py`, and a route in `pharmacy/urls.py`.
+One module per model, and the same name across the five packages. A new
+resource means a matching file in `models/`, `repositories/`, `services/`,
+`serializers/` and `views/`, a filterset in `filters.py`, and a route in
+`pharmacy/urls.py`. `tests/test_layering.py` checks the first three line up.
 
 Most resources ship two serializers: `XSerializer` for the resource's own
 endpoints and `XSummarySerializer` for the nested read on another resource.
@@ -65,6 +68,22 @@ Writes take flat ids (`patient_id`), reads return the nested summary, so
 rendering a prescription is one request.
 
 ## Conventions that bite
+
+**Views get querysets from repositories and call services for anything that
+changes state. Nothing outside `pharmacy/repositories/` names a manager**
+(`objects`, `all_objects`, or a related manager) -- `test_layering.py` fails
+the build on one. Reads do not go through services: a GET has queries and no
+rules, and a service read would be an empty pass-through; what a read must
+not do is define its own queryset, because the locked re-read in a write path
+and the list read have to share one definition or their joins drift. A
+repository returns querysets (DRF's filtering, pagination and `nested_list`
+need one) and owns the `select_related` for its model; a service owns the
+transaction, the lock, the refusals and the delete guard
+(`protected_relations` lives on the service); a viewset declares `repository`
+and `service` and never calls `serializer.save()`. Every service write takes
+a `WriteContext` first, built once per request by the base viewset. Model
+methods do not persist. Migrations, `seed_local` and tests use the ORM
+directly; that is where the rule stops.
 
 **Re-export every model.** Django resolves `app_label` from the package a model
 is imported into, so a model missing from `pharmacy/models/__init__.py` breaks
@@ -108,6 +127,22 @@ things; use the former when the child has its own top-level resource.
 stays resolvable because records name them; `DELETE` is for rows that should
 never have existed. `PharmacyLocation.pharmacist_in_charge` is the board
 designation, validated when set and never inferred from anything else.
+
+**Every write is audited, from the service.** `services.history` diffs a
+row before and after and writes a `FieldChange` per changed column in the
+writer's transaction; `CrudService` and the prescription and fill services
+call it, nothing else does. A write that bypasses the services leaves no
+history, which is one more reason nothing bypasses them.
+
+**Totals are derived, never stored.** What a prescription has dispensed is
+the sum over its fills, computed on read (the fills are prefetched) and under
+the lock in a write path. The authorized-quantity rule is a service rule held
+by the prescription's row lock, not a CHECK; the database constraints on a
+fill are single-row facts only. `is_partial` is derived the same way.
+
+**`X-Staff-Id` is resolved in one place**, `ServiceViewSetMixin.ctx`, into
+`WriteContext.staff`. Services that need a person read `ctx.staff`; nothing
+reads the header. When a token carries staff identity, that is the seam.
 
 **Identifiers are normalized on the way in**, in `validators.py`: an NPI must
 carry a valid Luhn check digit, an NDC in any segmented form is stored as 11

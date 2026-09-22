@@ -8,7 +8,7 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.utils import timezone
 
-from pharmacy.models import Pharmacy, PharmacyLocation, Prescriber, Prescription, Staff
+from pharmacy.models import Pharmacy, PharmacyLocation, Prescriber, Prescription, RxCounter, Staff
 from pharmacy.validators import validate_npi
 
 
@@ -136,6 +136,22 @@ class TestSeedLocal:
         assert designated.exists()
         for location in designated:
             location.full_clean()
+
+    def test_onboards_every_pharmacy_with_an_rx_counter(self, api):
+        """Every seeded pharmacy, the home one included, can number a
+        prescription straight after a boot; a re-run never rewinds a counter."""
+        with environment(DJANGO_ENV="local", SEED_DEMO_DATA="true"):
+            call_command("seed_local")
+            assert RxCounter.objects.count() == Pharmacy.objects.count()
+            assert set(RxCounter.objects.values_list("last_issued", flat=True)) == {1_000_000_000}
+            counter = RxCounter.objects.first()
+            counter.last_issued += 5
+            counter.save()
+            call_command("seed_local")
+            counter.refresh_from_db()
+        assert counter.last_issued == 1_000_000_005
+        # And the seeded demo numbers sit below the counter's range.
+        assert Prescription.objects.order_by("-rx_number").first().rx_number < 1_000_000_000
 
     def test_seeds_both_pharmacy_shapes(self):
         with environment(DJANGO_ENV="local", SEED_DEMO_DATA="true"):

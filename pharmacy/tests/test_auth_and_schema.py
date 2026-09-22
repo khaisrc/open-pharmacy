@@ -81,6 +81,7 @@ class TestSchema:
     def test_group_order_is_pinned(self, schema):
         assert [tag["name"] for tag in schema["tags"]] == [
             "Prescriptions",
+            "Fills",
             "Patients",
             "Prescribers",
             "Medications",

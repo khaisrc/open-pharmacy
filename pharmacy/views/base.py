@@ -1,37 +1,74 @@
+import uuid
+
 from django.utils.functional import cached_property
 from rest_framework import viewsets
 from rest_framework.generics import get_object_or_404
 
-from pharmacy.exceptions import Conflict
-from pharmacy.models import Pharmacy
+from pharmacy import repositories
+from pharmacy.exceptions import InvalidRequest
+from pharmacy.services import WriteContext
+
+STAFF_HEADER = "X-Staff-Id"
 
 
-class SoftDeleteModelViewSet(viewsets.ModelViewSet):
-    """Every viewset uses the live-only `objects` manager, and refuses a delete
-    that would orphan live references.
+class ServiceViewSetMixin:
+    """An adapter: parse the request, call the service, serialize the result.
 
-    safedelete bypasses Django's on_delete when soft-deleting, so PROTECT never
-    fires and the guard has to live here. PROTECT stays on the FKs as a backstop
-    for a genuine hard_delete() in some future purge job; the exception handler
-    maps the ProtectedError that would raise, so nothing here catches it.
+    Reads come from `repository.live()`, the live-only queryset with the joins
+    every read needs; writes go through `service`, which owns the rules, the
+    transaction and the delete guard. `serializer.save()` is never called --
+    a serializer here validates and renders, and the service is the only
+    thing that persists.
     """
 
-    # (related_name, human label) pairs checked before a delete is allowed.
-    protected_relations = ()
+    repository = None
+    service = None
+
+    @cached_property
+    def ctx(self):
+        return WriteContext.from_request(self.request, staff=self._staff_from_header())
+
+    def _staff_from_header(self):
+        """The staff member the X-Staff-Id header names, or None.
+
+        Resolved only when a write asks for the context, so a read never
+        looks at the header. When present it must be a live, active staff
+        member: a wrong header is a 400 before any service runs, rather than
+        a fill silently attributed to nobody.
+        """
+        value = self.request.headers.get(STAFF_HEADER)
+        if not value:
+            return None
+        try:
+            pk = uuid.UUID(value)
+        except ValueError:
+            pk = None
+        staff = repositories.staff.find(pk=pk, is_active=True).first() if pk else None
+        if staff is None:
+            raise InvalidRequest(
+                f"{STAFF_HEADER} does not name a live, active staff member.",
+                code="invalid_staff",
+                details={"header": STAFF_HEADER, "value": value},
+            )
+        return staff
+
+    def get_queryset(self):
+        return self.repository.live()
+
+    def perform_create(self, serializer):
+        serializer.instance = self.service.create(self.ctx, **serializer.validated_data)
+
+    def perform_update(self, serializer):
+        serializer.instance = self.service.update(
+            self.ctx, serializer.instance, **serializer.validated_data
+        )
 
     def perform_destroy(self, instance):
-        blocking = {}
-        for relation, label in self.protected_relations:
-            count = getattr(instance, relation).count()
-            if count:
-                blocking[label] = count
-        if blocking:
-            raise Conflict(
-                "Cannot delete a record that live records still reference.",
-                code="referenced",
-                details={"referenced_by": blocking},
-            )
-        instance.delete()
+        self.service.delete(self.ctx, instance)
+
+
+class SoftDeleteModelViewSet(ServiceViewSetMixin, viewsets.ModelViewSet):
+    """Full CRUD over a soft-deleted model, through the layers above."""
 
 
 def nested_list(viewset_class, request, **scope):
@@ -50,22 +87,27 @@ def nested_list(viewset_class, request, **scope):
     return view.get_paginated_response(serializer.data)
 
 
-class PharmacyScopedViewSet(SoftDeleteModelViewSet):
-    """A sub-resource of a pharmacy: /pharmacies/{pharmacy_id}/<children>/.
+class ScopedViewSetMixin:
+    """A sub-resource: /<parents>/{parent_id}/<children>/.
 
     The parent comes from the URL, so every action is scoped to it before any
     client-supplied filter applies, a create attaches it without a body field,
-    and an unknown or deleted pharmacy is a 404 on every route rather than an
+    and an unknown or deleted parent is a 404 on every route rather than an
     empty list -- the same answer a bad {id} gives, so a client cannot tell
-    the two apart. The model's FK to Pharmacy must be named `pharmacy`.
+    the two apart. Subclasses name the parent's repository, the URL kwarg and
+    the child model's FK field to it.
     """
 
-    pharmacy_url_kwarg = "pharmacy_id"
+    parent_repository = None
+    parent_url_kwarg = None
+    parent_field = None
 
     @cached_property
-    def pharmacy(self):
+    def parent(self):
         # DRF's get_object_or_404 also turns a malformed UUID into a 404.
-        return get_object_or_404(Pharmacy.objects, pk=self.kwargs[self.pharmacy_url_kwarg])
+        return get_object_or_404(
+            self.parent_repository.live(), pk=self.kwargs[self.parent_url_kwarg]
+        )
 
     @property
     def generating_schema(self):
@@ -76,13 +118,28 @@ class PharmacyScopedViewSet(SoftDeleteModelViewSet):
         queryset = super().get_queryset()
         if self.generating_schema:
             return queryset.none()
-        return queryset.filter(pharmacy=self.pharmacy)
+        return queryset.filter(**{self.parent_field: self.parent})
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
         if not self.generating_schema:
-            context["pharmacy"] = self.pharmacy
+            context[self.parent_field] = self.parent
         return context
 
     def perform_create(self, serializer):
-        serializer.save(pharmacy=self.pharmacy)
+        serializer.instance = self.service.create(
+            self.ctx, **{self.parent_field: self.parent}, **serializer.validated_data
+        )
+
+
+class PharmacyScopedViewSet(ScopedViewSetMixin, SoftDeleteModelViewSet):
+    """Full CRUD on a child of a pharmacy: /pharmacies/{pharmacy_id}/<children>/.
+    The model's FK to Pharmacy must be named `pharmacy`."""
+
+    parent_repository = repositories.pharmacies
+    parent_url_kwarg = "pharmacy_id"
+    parent_field = "pharmacy"
+
+    @property
+    def pharmacy(self):
+        return self.parent

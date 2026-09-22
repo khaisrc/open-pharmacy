@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
-from pharmacy.models import Address, Prescriber
+from pharmacy import repositories
+from pharmacy.models import Prescriber
 from pharmacy.validators import validate_npi
 
 from .address import AddressSummarySerializer
@@ -11,7 +12,7 @@ class PrescriberSerializer(serializers.ModelSerializer):
     address = AddressSummarySerializer(read_only=True)
     address_id = serializers.PrimaryKeyRelatedField(
         source="address",
-        queryset=Address.objects.all(),
+        queryset=repositories.addresses.live(),
         required=False,
         allow_null=True,
         write_only=True,
@@ -44,7 +45,7 @@ class PrescriberSerializer(serializers.ModelSerializer):
     def validate_npi(self, value):
         validate_npi(value)
         reject_live_duplicate(
-            Prescriber.objects.filter(npi=value),
+            repositories.prescribers.find(npi=value),
             self.instance,
             record="prescriber",
             field="npi",

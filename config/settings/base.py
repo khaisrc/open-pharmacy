@@ -139,7 +139,11 @@ SPECTACULAR_SETTINGS = {
         "displayRequestDuration": True,
     },
     "TAGS": [
-        {"name": "Prescriptions", "description": "Prescriptions, fills and cancellations."},
+        {"name": "Prescriptions", "description": "Prescriptions and their lifecycle."},
+        {
+            "name": "Fills",
+            "description": "Dispensings of a prescription, from pending to completed.",
+        },
         {"name": "Patients", "description": "People a prescription is written for."},
         {"name": "Prescribers", "description": "Clinicians who write prescriptions."},
         {"name": "Medications", "description": "Products a prescription names, keyed by NDC."},

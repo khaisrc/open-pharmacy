@@ -1,7 +1,8 @@
 from django.utils import timezone
 from rest_framework import serializers
 
-from pharmacy.models import Address, Patient
+from pharmacy import repositories
+from pharmacy.models import Patient
 
 from .address import AddressSummarySerializer
 
@@ -11,7 +12,7 @@ class PatientSerializer(serializers.ModelSerializer):
     address = AddressSummarySerializer(read_only=True)
     address_id = serializers.PrimaryKeyRelatedField(
         source="address",
-        queryset=Address.objects.all(),
+        queryset=repositories.addresses.live(),
         required=False,
         allow_null=True,
         write_only=True,
