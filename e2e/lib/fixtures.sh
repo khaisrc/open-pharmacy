@@ -108,7 +108,7 @@ _make_prescription() {
     patient_id: $p,
     prescriber_id: $d,
     medication_id: $m,
-    prescription_origin_code: "provider",
+    intake_source: "provider",
     dose_amount: "1 tablet",
     quantity: 30,
     fills_authorized: 1,

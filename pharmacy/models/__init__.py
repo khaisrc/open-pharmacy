@@ -24,8 +24,8 @@ from .prescription import (
     ALLOWED_TRANSITIONS,
     RX_NUMBER_MAX,
     TERMINAL_STATUSES,
+    IntakeSource,
     Prescription,
-    PrescriptionOriginCode,
     PrescriptionStatus,
 )
 from .rx_counter import RxCounter
@@ -52,6 +52,7 @@ __all__ = [
     "Fill",
     "FillStatus",
     "Gender",
+    "IntakeSource",
     "LocationType",
     "Medication",
     "MedicationForm",
@@ -61,7 +62,6 @@ __all__ = [
     "PractitionerType",
     "Prescriber",
     "Prescription",
-    "PrescriptionOriginCode",
     "PrescriptionStatus",
     "RxCounter",
     "Staff",

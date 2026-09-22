@@ -106,8 +106,8 @@ A pharmacy whose counter has not been seeded cannot create prescriptions
 (409 `rx_counter_not_seeded`); `seed_local` seeds the local ones, and
 "Onboarding a pharmacy" in [deployment.md](deployment.md) covers the rest.
 
-`prescription_origin_code` is NCPDP D.0 field 419-DJ as a word rather than
-the wire digit: `not_specified`, `provider` (written), `telephone`,
+`intake_source` is how the order arrived — NCPDP D.0 field 419-DJ,
+Prescription Origin Code, as a word rather than the wire digit: `not_specified`, `provider` (written), `telephone`,
 `electronic`, `fax`, `pharmacy` (a new Rx number created from an existing
 prescription, such as a transfer in) — codes 0 to 5 in that order on a
 claim. It is required when the prescription is entered and cannot be

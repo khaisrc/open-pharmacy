@@ -79,7 +79,7 @@ class PrescriptionSerializer(serializers.ModelSerializer):
             "pharmacy_location",
             "pharmacy_location_id",
             "rx_number",
-            "prescription_origin_code",
+            "intake_source",
             "dose_amount",
             "quantity",
             "fills_authorized",
@@ -99,9 +99,9 @@ class PrescriptionSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
-    def validate_prescription_origin_code(self, value):
+    def validate_intake_source(self, value):
         # How the order arrived is a fact about its entry; it does not change.
-        if self.instance is not None and value != self.instance.prescription_origin_code:
+        if self.instance is not None and value != self.instance.intake_source:
             raise serializers.ValidationError(
                 "The prescription origin code is set when the prescription is entered "
                 "and cannot be changed."

@@ -14,8 +14,9 @@ RX_NUMBER_MAX = 999_999_999_999
 FILL_FRACTION_PLACES = Decimal("0.00000001")
 
 
-class PrescriptionOriginCode(models.TextChoices):
-    """NCPDP Telecommunication Standard D.0, field 419-DJ. Stored as a word,
+class IntakeSource(models.TextChoices):
+    """How the order arrived: NCPDP Telecommunication Standard D.0, field
+    419-DJ (Prescription Origin Code), under the name the domain uses. Stored as a word,
     not the one-digit wire code (0-5, in this order), so a row reads as what
     it means; a claim maps it back at the edge. `pharmacy` is what NCPDP
     assigns when a new Rx number is created from an existing prescription --
@@ -78,9 +79,7 @@ class Prescription(TimeStampedModel):
     # pharmacy by construction of the counter, not by a constraint: that
     # would need the pharmacy denormalized onto this row.
     rx_number = models.PositiveBigIntegerField()
-    prescription_origin_code = models.CharField(
-        max_length=16, choices=PrescriptionOriginCode.choices
-    )
+    intake_source = models.CharField(max_length=16, choices=IntakeSource.choices)
     dose_amount = models.CharField(max_length=100)
     # PositiveIntegerField is Django's name for non-negative, so both of these
     # need the validator to be the positive integers the model intends: a

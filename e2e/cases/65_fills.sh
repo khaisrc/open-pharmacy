@@ -4,10 +4,11 @@ source "$E2E_DIR/lib/http.sh"
 source "$E2E_DIR/lib/gen.sh"
 source "$E2E_DIR/lib/fixtures.sh"
 
-# The dispensing workflow end to end, built from nothing: a store and its
-# staff, the three records a prescription points at, then the prescription
-# itself and the fills taken against it. Every step asserts what it created,
-# because a wrong id at the top shows up as a puzzling refusal at the bottom.
+# The dispensing workflow end to end, against the home pharmacy (Acme, seeded
+# by migration 0003) rather than a fresh store minted on every run: staff, the
+# three records a prescription points at, then the prescription itself and the
+# fills taken against it. Every step asserts what it created, because a wrong
+# id at the top shows up as a puzzling refusal at the bottom.
 #
 # Two people, because the workflow needs two: a technician starts a fill and a
 # pharmacist verifies it. Both act through X-Staff-Id, which is how a write
@@ -16,9 +17,7 @@ source "$E2E_DIR/lib/fixtures.sh"
 
 section "the pharmacy and its staff"
 
-make_pharmacy;                    PHARMACY="$NEW_ID"
-make_address;                     STORE_ADDRESS="$NEW_ID"
-make_location "$PHARMACY" "$STORE_ADDRESS"; LOCATION="$NEW_ID"
+use_home_pharmacy; PHARMACY="$HOME_PHARMACY"; LOCATION="$HOME_LOCATION"
 
 PHARMACIST_LAST="Pharmacist-${RUN_TAG}x$(_rand 1000000)"
 PHARMACIST_REG="$(gen_registration)"
@@ -102,7 +101,7 @@ req POST /prescriptions/ "$(jq -nc \
   --arg p "$PATIENT" --arg d "$PRESCRIBER" --arg m "$MEDICATION" --arg l "$LOCATION" \
   --arg w "$WRITTEN_AT" --arg e "$EXPIRES_AT" '{
     patient_id: $p, prescriber_id: $d, medication_id: $m, pharmacy_location_id: $l,
-    prescription_origin_code: "provider",
+    intake_source: "provider",
     dose_amount: "1 tablet", quantity: 30, fills_authorized: 3,
     instructions: "Take one tablet by mouth daily.",
     status: "active", written_at: $w, expires_at: $e }')"
@@ -232,7 +231,7 @@ req POST /prescriptions/ "$(jq -nc \
   --arg p "$PATIENT" --arg d "$PRESCRIBER" --arg m "$MEDICATION" --arg l "$LOCATION" \
   --arg w "$WRITTEN_AT" --arg e "$EXPIRES_AT" '{
     patient_id: $p, prescriber_id: $d, medication_id: $m, pharmacy_location_id: $l,
-    prescription_origin_code: "provider",
+    intake_source: "provider",
     dose_amount: "1 tablet", quantity: 30, fills_authorized: 3,
     instructions: "Take one tablet by mouth daily.",
     status: "active", written_at: $w, expires_at: $e }')"

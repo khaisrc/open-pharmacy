@@ -27,8 +27,8 @@ for what differs from or was not in the text).
 
 Replace the `fills_used` counter with a `Fill` row per dispensing that moves
 through a status workflow, so a transfer under 21 CFR 1306.25 can produce the
-date, location and dispensing identity of every previous fill. Add the NCPDP
-prescription origin code and an Rx number to `Prescription`. Add a
+date, location and dispensing identity of every previous fill. Add the
+intake source (NCPDP prescription origin code) and an Rx number to `Prescription`. Add a
 column-level change history for every model. Introduce the service and
 repository layers it is built on.
 
@@ -166,7 +166,7 @@ test unmodified and green; (2) the feature.
 | `fills_used` | **Removed**, with its CHECK. No backfill: not in production. |
 | `quantity`, `fills_authorized` | Unchanged. |
 | `rx_number` | **New.** `PositiveBigIntegerField`, indexed, assigned by `services.rx_number` on create (§7). Read-only. |
-| `prescription_origin_code` | **New.** NCPDP D.0 419-DJ, stored as a word rather than the wire digit (changed after v4, at your request): `not_specified`, `provider`, `telephone`, `electronic`, `fax`, `pharmacy` — codes 0–5 in that order. Set on create, immutable after (Q3). `pharmacy` is what NCPDP assigns when a new Rx number is created from an existing prescription — a transfer in — which is why one field covers what `intake_source` and `origin_format` did. |
+| `intake_source` | **New** (named `prescription_origin_code` in v4; renamed at your request). NCPDP D.0 419-DJ, stored as a word rather than the wire digit (also changed after v4): `not_specified`, `provider`, `telephone`, `electronic`, `fax`, `pharmacy` — codes 0–5 in that order. Set on create, immutable after (Q3). `pharmacy` is what NCPDP assigns when a new Rx number is created from an existing prescription — a transfer in — which is why one field covers what `intake_source` and `origin_format` did. |
 
 Derived, never stored, on the model and serialized read-only:
 
@@ -349,7 +349,7 @@ The fill representation:
 `{id, sequence, status, rx_number, pharmacy_location (summary), operator (staff summary), verified_by (staff summary | null), quantity_dispensed, is_partial, days_supply, dispensed_at, created_at, updated_at}`.
 
 **`POST /prescriptions/{id}/fill/` is retired.** The prescription
-representation gains `rx_number`, `prescription_origin_code`,
+representation gains `rx_number`, `intake_source`,
 `quantity_authorized`, `quantity_dispensed`, `quantity_in_progress`,
 `quantity_remaining`, `fills_remaining`; `fills_used` stays;
 `TRANSITION_HINTS[COMPLETED]` points at `complete/`. `cancel/` on the
@@ -365,7 +365,7 @@ the resource, header and filter rows.
 `0008` depends on `0007_staff`; nothing past `0009`.
 
 - **`0008_fills_rx_numbers_change_history`** — DDL: remove `fills_used` and
-  `fills_used_lte_authorized`; add `prescription_origin_code` (existing rows
+  `fills_used_lte_authorized`; add `intake_source` (existing rows
   get `not_specified`) and `rx_number` nullable; create `Fill`,
   `RxCounter`, `FieldChange` with constraints and indexes.
 - **`0009_assign_rx_numbers`** — `RunPython` numbering any prescription
@@ -389,7 +389,7 @@ the resource, header and filter rows.
   `test_put_of_the_current_body…` drops `fills_used=3`.
   `test_fill_and_cancel_cost_the_same_queries` is replaced by a direct
   assertion that `repositories.prescription.get_locked()` and `live()` carry
-  the same joins. Create payloads gain `prescription_origin_code` if Q3
+  the same joins. Create payloads gain `intake_source` if Q3
   makes it required.
 - `TestStaffHeader`: missing header on fill create is 400 `staff_required`;
   unknown, deleted or inactive id is 400 `invalid_staff`; a technician on
@@ -456,7 +456,7 @@ Defaults in bold; none blocks. I take the defaults unless you say otherwise.
 1. *(settled: counter only, §7.)*
 2. **`unverify/`** or **`pending/`** for `verified → pending`. **Default:
    `unverify/`**, a verb like the other three.
-3. **`prescription_origin_code` on create.** **Default: required, immutable
+3. **`intake_source` on create.** **Default: required, immutable
    after** (four existing create payloads gain it). Alternative: default `0`.
 4. **History API.** **Default: none in this change.**
 5. **History on create.** **Default: one row per populated field.**
@@ -511,7 +511,7 @@ focus on them:
   the locked statement is one `SELECT ... FOR UPDATE OF` with the joins.
 - **Migration `0009`** (`RunPython` then `AlterField` in one file) applied
   cleanly on the embedded Postgres; the executor test covers it. Existing
-  rows get `prescription_origin_code = "not_specified"` in `0008`.
+  rows get `intake_source = "not_specified"` in `0008`.
 - **`seed_local` onboards the local pharmacies** with a counter at
   1,000,000,000 (your instruction after v4), and the one completed demo
   prescription became **cancelled**. With no fills seeded, `completed` would claim a dispensing
