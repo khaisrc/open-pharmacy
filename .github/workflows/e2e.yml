@@ -1,0 +1,68 @@
+name: e2e
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # `up -d web` starts db, waits on its healthcheck, runs the one-shot
+      # migrate service and then serves -- the same three services a developer
+      # gets from `docker compose up`, so CI exercises the stack that ships.
+      - name: Start the stack
+        run: docker compose up -d --build web
+
+      # Compose returns once the container is running, which is a moment before
+      # runserver is listening. run.sh's own preflight has no retry -- it is
+      # written for a developer who can just start the server -- so the waiting
+      # happens here.
+      - name: Wait for the API
+        run: |
+          for _ in $(seq 1 60); do
+            if curl -fsS http://localhost:8000/api/v1/health/ >/dev/null; then
+              echo "API is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "The API never came up" >&2
+          docker compose logs web >&2
+          exit 1
+
+      # From the runner rather than from a container: the suite is bash, curl
+      # and jq, all of which ubuntu-latest already has, and crossing the network
+      # boundary the way a client does is the whole point of it. Talking to the
+      # published port is also what a developer does locally.
+      - name: Run the e2e suite
+        run: ./e2e/run.sh
+
+      # The HTML report is self-contained and readable in a browser, so attach
+      # it whether or not the run passed -- a failure is exactly when someone
+      # wants the request and response behind it.
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: |
+            e2e/report.html
+            e2e/junit.xml
+          if-no-files-found: warn
+
+      - name: Server logs
+        if: failure()
+        run: docker compose logs web
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v

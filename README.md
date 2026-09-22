@@ -140,6 +140,16 @@ docker compose exec db psql -U pharmacy open_pharmacy
 
 The test suite runs against PostgreSQL 18, the same engine as production, in a database pytest creates and drops. CI (`.github/workflows/test.yml`) runs the suite, ruff, and `makemigrations --check` through the same Compose file.
 
+A second suite lives in `e2e/`: bash and curl against a running server, logging in with a real password and importing nothing from `pharmacy/`. It is the client's-eye view that `pharmacy/tests/` cannot give, since those drive the same endpoints in process with authentication forced. Start the stack, then run it from the host:
+
+```bash
+docker compose up -d
+./e2e/run.sh                            # every case file, eight at a time
+./e2e/run.sh -f prescriptions -p 1      # one file, streaming as it goes
+```
+
+It writes `e2e/report.html`, a self-contained Gherkin-shaped record of every request and response the run made. CI (`.github/workflows/e2e.yml`) runs the same thing against the same Compose stack and attaches that report to the run. `e2e/README.md` covers the rest.
+
 ### Layout
 
 ```
@@ -152,6 +162,7 @@ pharmacy/validators.py  NPI check digit, NDC and NCPDP normalization
 pharmacy/exceptions.py  the error envelope and every 409
 pharmacy/management/commands/seed_local.py  the superuser and demo data
 plans/               design documents; the code is the source of truth where they differ
+e2e/                 curl-driven end-to-end suite, run from the host against a served stack
 ```
 
 Identifiers are validated and normalized on the way in: an NPI must carry a valid check digit, an NDC in any segmented form is stored as 11 digits, an NCPDP ID as 7. Unique constraints are partial and cover live rows only, which is what lets a soft-deleted record's identifier be reused.
