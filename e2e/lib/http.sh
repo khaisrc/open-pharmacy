@@ -23,8 +23,8 @@
 : "${API_ROOT:=${BASE_URL}/api/v1}"
 
 CASE_NAME="$(basename "${BASH_SOURCE[${#BASH_SOURCE[@]} - 1]}" .sh)"
-_BODY_FILE="$(mktemp -t apitestbody)"
-_HDR_FILE="$(mktemp -t apitesthdr)"
+_BODY_FILE="$(mktemp -t apitestbody.XXXXXX)"
+_HDR_FILE="$(mktemp -t apitesthdr.XXXXXX)"
 trap 'rm -f "$_BODY_FILE" "$_HDR_FILE"' EXIT
 
 _EVENTS="${RESULT_DIR}/events.${CASE_NAME}.jsonl"

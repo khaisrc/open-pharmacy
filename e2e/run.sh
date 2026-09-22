@@ -160,7 +160,15 @@ fi
 # --- run ---------------------------------------------------------------------
 
 RUN_ID="$(date +%Y%m%d%H%M%S)-$$"
-RESULT_DIR="$(mktemp -d -t apitestsuite)"
+RESULT_DIR="$(mktemp -d -t apitestsuite.XXXXXX)"
+# Without this, a failed mktemp (no -e here) leaves RESULT_DIR empty and every
+# path built from it below resolves under /, where writes fail silently one
+# by one -- no case file logs an assertion, and a run that did nothing reads
+# as zero failures instead of the error it actually was.
+if [[ -z "$RESULT_DIR" || ! -d "$RESULT_DIR" ]]; then
+  echo "${c_red}mktemp could not create a scratch directory${c_off}" >&2
+  exit 2
+fi
 EVENTS="$RESULT_DIR/events.jsonl"
 : > "$EVENTS"
 export RUN_ID RESULT_DIR BASE_URL API_USER API_PASS
