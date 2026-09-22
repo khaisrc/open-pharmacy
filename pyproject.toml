@@ -38,6 +38,11 @@ exclude = ["pharmacy/migrations"]
 select = ["E", "F", "I", "UP", "B", "DJ", "C4"]
 ignore = ["B008"]
 
+# report.py is one long HTML template held in f-strings. Wrapping its markup at
+# 100 columns to satisfy E501 would make the page harder to read than the code.
+[tool.ruff.lint.per-file-ignores]
+"e2e/bin/report.py" = ["E501"]
+
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings.local"
 python_files = ["test_*.py"]

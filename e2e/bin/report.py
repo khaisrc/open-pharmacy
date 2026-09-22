@@ -21,8 +21,8 @@ import json
 import re
 import sys
 from collections import OrderedDict
-from datetime import datetime, timezone
-from urllib.parse import urlsplit, parse_qsl
+from datetime import UTC, datetime
+from urllib.parse import parse_qsl, urlsplit
 
 TAILWIND_CDN = "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"
 DAISYUI_CDN = "https://cdn.jsdelivr.net/npm/daisyui@5/daisyui.css"
@@ -192,8 +192,9 @@ def body_block(body, label):
     pretty, is_json = pretty_body(body)
     shown, clipped = truncate(pretty)
     note = (
-        '<p class="text-xs opacity-60 mt-1">'
-        f"shown to the first {MAX_BODY_CHARS:,} characters</p>" if clipped else ""
+        f'<p class="text-xs opacity-60 mt-1">shown to the first {MAX_BODY_CHARS:,} characters</p>'
+        if clipped
+        else ""
     )
     # Clipping can cut mid-token, which would leave highlight.js parsing an
     # unterminated string, so a clipped body is shown plain.
@@ -300,9 +301,9 @@ def render_step(step):
         f'<li class="flex gap-2 items-start py-0.5">'
         f'<span class="{"text-success" if a["outcome"] == "pass" else "text-error"} '
         f'font-mono text-xs mt-0.5 w-9 shrink-0">'
-        f'{"pass" if a["outcome"] == "pass" else "fail"}</span>'
+        f"{'pass' if a['outcome'] == 'pass' else 'fail'}</span>"
         f'<span class="opacity-50 text-xs font-mono mt-0.5 w-10 shrink-0">'
-        f'{e(a.get("keyword") or "Then")}</span>'
+        f"{e(a.get('keyword') or 'Then')}</span>"
         f'<span class="text-sm">{e(a["description"])}</span></li>'
         + (
             f'<li><pre class="bg-error/10 text-error rounded-box p-3 text-xs '
@@ -373,7 +374,7 @@ def render(cases, run_id, base_url, seconds, suite_name):
     passed, failed, requests = counts(cases)
     total = passed + failed
     ok = failed == 0
-    generated = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    generated = datetime.now(UTC).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
 
     verdict = (
         '<span class="badge badge-lg badge-success">all passing</span>'
@@ -558,14 +559,12 @@ def render_junit(cases, seconds, suite_name):
             for step in steps.values():
                 for assertion in step.assertions:
                     keyword = assertion.get("keyword") or "Then"
-                    test_name = (
-                        f"{step.keyword} {step.text} / {keyword} {assertion['description']}"
-                    )
+                    test_name = f"{step.keyword} {step.text} / {keyword} {assertion['description']}"
                     if assertion["outcome"] == "fail":
                         failures += 1
                         body = (
                             f'<failure message="{e(assertion["description"])}">'
-                            f'{e(assertion["detail"])}</failure>'
+                            f"{e(assertion['detail'])}</failure>"
                         )
                     else:
                         body = ""
@@ -582,9 +581,7 @@ def render_junit(cases, seconds, suite_name):
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         f'<testsuites name="{e(suite_name)}" tests="{passed + failed}" '
-        f'failures="{failed}" time="{seconds}">\n'
-        + "\n".join(suites)
-        + "\n</testsuites>\n"
+        f'failures="{failed}" time="{seconds}">\n' + "\n".join(suites) + "\n</testsuites>\n"
     )
 
 

@@ -219,6 +219,13 @@ and its `name` is the whole step -- `When POST /patients/ / Then the patient is
 created` -- so a CI failure list reads on its own, without the report open
 beside it.
 
+Both are written by `bin/report.py`, which `run.sh` shells out to as `python3`
+on the host -- not inside Compose, since nothing about rendering an event log
+needs the project's environment. It is linted with the repository and so assumes
+the same Python 3.12 the project pins. On an older interpreter the run itself
+still passes or fails normally; only the report is skipped, with a line saying
+so.
+
 ## What it covers
 
 | File | Covers |
