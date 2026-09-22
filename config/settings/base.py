@@ -124,8 +124,8 @@ REST_FRAMEWORK = {
 # Swagger groups operations by tag. The order here is the order the UI renders;
 # left alphabetical, the docs would open on Addresses instead of Prescriptions.
 SPECTACULAR_SETTINGS = {
-    "TITLE": "Pharmacy Ops API",
-    "DESCRIPTION": "REST API over prescriptions and the records they reference.",
+    "TITLE": "open-pharmacy API",
+    "DESCRIPTION": "Reference implementation of a backend system for a US pharmacy",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
     "SWAGGER_UI_DIST": "SIDECAR",
