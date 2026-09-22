@@ -60,12 +60,7 @@ def render(path, label):
     listed = "\n".join(f"- {name}" for name in broken[:MAX_LISTED])
     if len(broken) > MAX_LISTED:
         listed += f"\n- …and {len(broken) - MAX_LISTED} more"
-    return (
-        f"{line}\n\n"
-        "<details><summary>Failures</summary>\n\n"
-        f"{listed}\n\n"
-        "</details>"
-    )
+    return f"{line}\n\n<details><summary>Failures</summary>\n\n{listed}\n\n</details>"
 
 
 if __name__ == "__main__":
