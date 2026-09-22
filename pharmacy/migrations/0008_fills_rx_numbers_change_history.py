@@ -66,7 +66,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='prescription',
             name='prescription_origin_code',
-            field=models.CharField(choices=[('0', 'Not specified'), ('1', 'Written'), ('2', 'Telephone'), ('3', 'Electronic'), ('4', 'Facsimile'), ('5', 'Pharmacy')], default='0', max_length=1),
+            field=models.CharField(choices=[('not_specified', 'Not specified'), ('provider', 'Written'), ('telephone', 'Telephone'), ('electronic', 'Electronic'), ('fax', 'Facsimile'), ('pharmacy', 'Pharmacy')], default='not_specified', max_length=16),
             preserve_default=False,
         ),
         migrations.AddField(

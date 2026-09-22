@@ -18,7 +18,7 @@ def prescription_body(patient, prescriber, medication, location=None, **override
         "patient_id": str(patient.pk),
         "prescriber_id": str(prescriber.pk),
         "medication_id": str(medication.pk),
-        "prescription_origin_code": "1",
+        "prescription_origin_code": "provider",
         "dose_amount": "1 tablet",
         "quantity": 30,
     }

@@ -450,7 +450,9 @@ class TestPrescriptionOriginCode:
         assert response.status_code == 400
         assert "prescription_origin_code" in response.data["error"]["details"]
 
-    @pytest.mark.parametrize("code", ["0", "1", "2", "3", "4", "5"])
+    @pytest.mark.parametrize(
+        "code", ["not_specified", "provider", "telephone", "electronic", "fax", "pharmacy"]
+    )
     def test_every_code_round_trips(self, api, patient, prescriber, medication, location, code):
         body = prescription_body(
             patient, prescriber, medication, location, prescription_origin_code=code
@@ -461,13 +463,13 @@ class TestPrescriptionOriginCode:
 
     def test_unknown_code_is_400(self, api, patient, prescriber, medication, location):
         body = prescription_body(
-            patient, prescriber, medication, location, prescription_origin_code="9"
+            patient, prescriber, medication, location, prescription_origin_code="written"
         )
         assert api.post(URL, body, format="json").status_code == 400
 
     @pytest.mark.parametrize("method", ["patch", "put"])
     def test_immutable_after_create(self, api, method):
-        rx = PrescriptionFactory(prescription_origin_code="1")
+        rx = PrescriptionFactory(prescription_origin_code="provider")
         body = api.get(f"{URL}{rx.pk}/").data
         body.update(
             {
@@ -475,17 +477,18 @@ class TestPrescriptionOriginCode:
                 "prescriber_id": body["prescriber"]["id"],
                 "medication_id": body["medication"]["id"],
                 "pharmacy_location_id": body["pharmacy_location"]["id"],
-                "prescription_origin_code": "3",
+                "prescription_origin_code": "electronic",
             }
         )
-        payload = body if method == "put" else {"prescription_origin_code": "3"}
+        payload = body if method == "put" else {"prescription_origin_code": "electronic"}
         response = getattr(api, method)(f"{URL}{rx.pk}/", payload, format="json")
         assert response.status_code == 400
         assert "prescription_origin_code" in response.data["error"]["details"]
         rx.refresh_from_db()
-        assert rx.prescription_origin_code == "1"
+        assert rx.prescription_origin_code == "provider"
 
     def test_resending_the_same_code_is_fine(self, api):
-        rx = PrescriptionFactory(prescription_origin_code="1")
-        response = api.patch(f"{URL}{rx.pk}/", {"prescription_origin_code": "1"}, format="json")
+        rx = PrescriptionFactory(prescription_origin_code="provider")
+        body = {"prescription_origin_code": "provider"}
+        response = api.patch(f"{URL}{rx.pk}/", body, format="json")
         assert response.status_code == 200

@@ -15,18 +15,19 @@ FILL_FRACTION_PLACES = Decimal("0.00000001")
 
 
 class PrescriptionOriginCode(models.TextChoices):
-    """NCPDP Telecommunication Standard D.0, field 419-DJ. Stored as the
-    one-character code the wire uses. `5` is what NCPDP assigns when a new Rx
-    number is created from an existing prescription -- a transfer in -- so
-    this one field says both how the order arrived and whether it was
-    written here."""
+    """NCPDP Telecommunication Standard D.0, field 419-DJ. Stored as a word,
+    not the one-digit wire code (0-5, in this order), so a row reads as what
+    it means; a claim maps it back at the edge. `pharmacy` is what NCPDP
+    assigns when a new Rx number is created from an existing prescription --
+    a transfer in -- so this one field says both how the order arrived and
+    whether it was written here."""
 
-    NOT_SPECIFIED = "0", "Not specified"
-    WRITTEN = "1", "Written"
-    TELEPHONE = "2", "Telephone"
-    ELECTRONIC = "3", "Electronic"
-    FACSIMILE = "4", "Facsimile"
-    PHARMACY = "5", "Pharmacy"
+    NOT_SPECIFIED = "not_specified", "Not specified"
+    PROVIDER = "provider", "Written"
+    TELEPHONE = "telephone", "Telephone"
+    ELECTRONIC = "electronic", "Electronic"
+    FAX = "fax", "Facsimile"
+    PHARMACY = "pharmacy", "Pharmacy"
 
 
 class PrescriptionStatus(models.TextChoices):
@@ -78,7 +79,7 @@ class Prescription(TimeStampedModel):
     # would need the pharmacy denormalized onto this row.
     rx_number = models.PositiveBigIntegerField()
     prescription_origin_code = models.CharField(
-        max_length=1, choices=PrescriptionOriginCode.choices
+        max_length=16, choices=PrescriptionOriginCode.choices
     )
     dose_amount = models.CharField(max_length=100)
     # PositiveIntegerField is Django's name for non-negative, so both of these

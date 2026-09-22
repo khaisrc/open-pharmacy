@@ -128,7 +128,7 @@ class PrescriptionFactory(factory.django.DjangoModelFactory):
     pharmacy_location = factory.SubFactory(PharmacyLocationFactory)
     # Through the ORM, not the service, so the number is the factory's own.
     rx_number = factory.Sequence(lambda n: 100_000 + n)
-    prescription_origin_code = PrescriptionOriginCode.WRITTEN
+    prescription_origin_code = PrescriptionOriginCode.PROVIDER
     dose_amount = "1 tablet"
     quantity = 30
     fills_authorized = 3

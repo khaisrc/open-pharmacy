@@ -166,7 +166,7 @@ test unmodified and green; (2) the feature.
 | `fills_used` | **Removed**, with its CHECK. No backfill: not in production. |
 | `quantity`, `fills_authorized` | Unchanged. |
 | `rx_number` | **New.** `PositiveBigIntegerField`, indexed, assigned by `services.rx_number` on create (§7). Read-only. |
-| `prescription_origin_code` | **New.** NCPDP D.0 419-DJ, `CharField(1)`, choices `0` Not specified, `1` Written, `2` Telephone, `3` Electronic, `4` Facsimile, `5` Pharmacy. Stored as the one-character code the wire uses. Set on create, immutable after (Q3). `5` is what NCPDP assigns when a new Rx number is created from an existing prescription — a transfer in — which is why one field covers what `intake_source` and `origin_format` did. |
+| `prescription_origin_code` | **New.** NCPDP D.0 419-DJ, stored as a word rather than the wire digit (changed after v4, at your request): `not_specified`, `provider`, `telephone`, `electronic`, `fax`, `pharmacy` — codes 0–5 in that order. Set on create, immutable after (Q3). `pharmacy` is what NCPDP assigns when a new Rx number is created from an existing prescription — a transfer in — which is why one field covers what `intake_source` and `origin_format` did. |
 
 Derived, never stored, on the model and serialized read-only:
 
@@ -366,7 +366,7 @@ the resource, header and filter rows.
 
 - **`0008_fills_rx_numbers_change_history`** — DDL: remove `fills_used` and
   `fills_used_lte_authorized`; add `prescription_origin_code` (existing rows
-  get `0`, Not specified) and `rx_number` nullable; create `Fill`,
+  get `not_specified`) and `rx_number` nullable; create `Fill`,
   `RxCounter`, `FieldChange` with constraints and indexes.
 - **`0009_assign_rx_numbers`** — `RunPython` numbering any prescription
   already in a dev database (per pharmacy, `written_at` order, from 1 —
@@ -511,7 +511,7 @@ focus on them:
   the locked statement is one `SELECT ... FOR UPDATE OF` with the joins.
 - **Migration `0009`** (`RunPython` then `AlterField` in one file) applied
   cleanly on the embedded Postgres; the executor test covers it. Existing
-  rows get `prescription_origin_code = "0"` (Not specified) in `0008`.
+  rows get `prescription_origin_code = "not_specified"` in `0008`.
 - **`seed_local` onboards the local pharmacies** with a counter at
   1,000,000,000 (your instruction after v4), and the one completed demo
   prescription became **cancelled**. With no fills seeded, `completed` would claim a dispensing

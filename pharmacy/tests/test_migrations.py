@@ -60,7 +60,7 @@ def test_0009_numbers_existing_prescriptions_per_pharmacy(migrate):
             prescriber=prescriber,
             medication=medication,
             pharmacy_location=store,
-            prescription_origin_code="0",
+            prescription_origin_code="not_specified",
             dose_amount="1",
             quantity=30,
             written_at=when,
