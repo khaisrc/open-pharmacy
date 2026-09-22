@@ -65,25 +65,61 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v7
 
       - name: Build the image
         run: docker compose build web
 
+      # The three checks below each keep going on failure and tee their
+      # output, so the summary comment can report all three rather than only
+      # the first one to break. continue-on-error also means none of them
+      # fails the job, which is what the gate step at the end is for.
+      #
       # --no-cache because /app is the bind-mounted checkout, which the
       # runner owns as a different uid than the image's app user, so ruff
       # cannot create .ruff_cache there. CI reuses no cache between runs anyway.
       - name: ruff check
-        run: docker compose run --rm -T web ruff check --no-cache .
+        id: ruff_check
+        continue-on-error: true
+        run: docker compose run --rm -T web ruff check --no-cache . 2>&1 | tee lint-ruff-check.txt
 
       - name: ruff format
-        run: docker compose run --rm -T web ruff format --check --no-cache .
+        id: ruff_format
+        continue-on-error: true
+        run: docker compose run --rm -T web ruff format --check --no-cache . 2>&1 | tee lint-ruff-format.txt
 
       # A model edited without its migration passes every test and then fails
       # on deploy, so the check belongs in CI rather than in review.
       - name: Every model change has a migration
-        run: docker compose run --rm -T web python manage.py makemigrations --check --dry-run
+        id: migrations
+        continue-on-error: true
+        run: docker compose run --rm -T web python manage.py makemigrations --check --dry-run 2>&1 | tee lint-migrations.txt
+
+      - name: Post summary comment
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          .github/scripts/lint_summary.sh \
+            "ruff check"  "${{ steps.ruff_check.outcome }}"  lint-ruff-check.txt \
+            "ruff format" "${{ steps.ruff_format.outcome }}" lint-ruff-format.txt \
+            "migrations"  "${{ steps.migrations.outcome }}"  lint-migrations.txt |
+            .github/scripts/pr_comment.sh lint
+
+      # continue-on-error above means a failed check leaves the job green, so
+      # this is what actually fails it. Without it the whole job would pass
+      # while the comment reported the failure.
+      - name: Fail if any check failed
+        if: >-
+          steps.ruff_check.outcome == 'failure' ||
+          steps.ruff_format.outcome == 'failure' ||
+          steps.migrations.outcome == 'failure'
+        run: exit 1
 
       - name: Stop the stack
         if: always()
