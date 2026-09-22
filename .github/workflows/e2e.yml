@@ -5,9 +5,8 @@ on:
     branches: [main]
   pull_request:
 
-# A second push to the same branch makes the first run's answer irrelevant --
-# except on main, where every commit is one someone may need a verdict for, and
-# cancelling the older run would leave it with none.
+# Cancel superseded runs on branches, but not on main: every commit to main
+# gets its own run, so we don't miss a regression.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
