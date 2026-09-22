@@ -41,12 +41,16 @@ find_comment() {
 }
 
 # Replace this section in place if it is already there, append it if not.
+#
+# The markers and the block reach awk through the environment, not -v: -v
+# expands escape sequences in the value, so a section quoting tool output
+# came out with every literal \n turned into a real line break.
 splice() {
   local body="$1"
   if grep -qF "$begin" <<<"$body"; then
-    awk -v b="$begin" -v e="$end" -v s="$block" '
-      $0 == b { print s; skip = 1; next }
-      $0 == e { skip = 0; next }
+    awk_b="$begin" awk_e="$end" awk_s="$block" awk '
+      $0 == ENVIRON["awk_b"] { print ENVIRON["awk_s"]; skip = 1; next }
+      $0 == ENVIRON["awk_e"] { skip = 0; next }
       skip { next }
       { print }
     ' <<<"$body"
