@@ -19,10 +19,12 @@ jobs:
     # even though this job never writes to the repo itself.
     permissions:
       contents: read
-      # The comment step below posts through the Issues API (a PR's
-      # conversation comments live there, not under Pull Requests), which is
-      # what this scope actually gates.
-      issues: write
+      # Not issues: write, even though the comment goes through an
+      # /issues/{n}/comments URL. That endpoint is gated by whichever of the
+      # two the number resolves to, and a PR resolves to pull-requests --
+      # which is just as well, since this repo has Issues turned off and so
+      # can grant issues: write to nothing.
+      pull-requests: write
     steps:
       - uses: actions/checkout@v7
 
