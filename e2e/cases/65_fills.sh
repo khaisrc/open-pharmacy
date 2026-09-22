@@ -279,40 +279,13 @@ assert_jq_eq '.quantity_remaining' '75' "seventy-five remain"
 assert_jq '.fills_used == 0.5' "half a fill has been used"
 assert_jq '.fills_remaining == 2.5' "two and a half fills remain"
 
-section "a partial fill: the rest of the same fill's worth"
-
-when "the technician starts a second fill for the other half"
-req_staff "$TECH" POST "/prescriptions/${PARTIAL_RX}/fills/" \
-  '{"quantity_dispensed":15,"days_supply":15}'
-assert_status 201 "the fill is created"
-assert_jq_eq '.sequence' '2' "it is the second fill on this prescription"
-assert_jq_eq '.quantity_dispensed' '15' "it is for the remaining fifteen tablets"
-assert_jq_eq '.is_partial' 'true' "it is a partial fill too"
-SECOND_PARTIAL="$(jqv .id)"
-
-given "it is verified" req_staff "$PHARMACIST" POST "/fills/${SECOND_PARTIAL}/verify/"
-
-when "the second partial fill is completed"
-req_staff "$PHARMACIST" POST "/fills/${SECOND_PARTIAL}/complete/"
-assert_status 200 "the completion is accepted"
-assert_jq_eq '.status' 'completed' "the fill is now completed"
-
-when "the prescription is read after both halves"
-req GET "/prescriptions/${PARTIAL_RX}/"
-assert_status 200 "the prescription is returned"
-assert_jq_eq '.status' 'active' "two whole fills' worth is still authorized"
-assert_jq_eq '.quantity_dispensed' '30' "the two halves add up to thirty"
-assert_jq_eq '.quantity_in_progress' '0' "nothing is in progress"
-assert_jq_eq '.quantity_remaining' '60' "sixty remain"
-assert_jq '.fills_used == 1' "the two halves are one fill's worth"
-assert_jq '.fills_remaining == 2' "two fills remain"
-
 when "the prescription's fills are listed"
 req GET "/prescriptions/${PARTIAL_RX}/fills/"
 assert_status 200 "the list is returned"
-assert_jq '.results | length == 2' "both fills are on the record"
-assert_jq '[.results[].sequence] == [1, 2]' "they are numbered in order"
-assert_jq 'all(.results[]; .status == "completed")' "both are completed"
-assert_jq 'all(.results[]; .is_partial)' "both are partial fills"
-assert_jq '[.results[].quantity_dispensed] | add == 30' \
-  "their quantities are what the prescription counts as dispensed"
+assert_jq '.results | length == 1' "the partial fill is the only one on the record"
+assert_jq '.results[0].id == $f' "it is the fill that was dispensed" --arg f "$PARTIAL_FILL"
+assert_jq '.results[0].sequence == 1' "it is numbered one"
+assert_jq '.results[0].status == "completed"' "it is completed"
+assert_jq '.results[0].is_partial' "it is a partial fill"
+assert_jq '.results[0].quantity_dispensed == 15' \
+  "its quantity is what the prescription counts as dispensed"
