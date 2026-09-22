@@ -13,6 +13,8 @@ class PharmacyRepository(Repository):
         # annotate() adds a GROUP BY, which makes QuerySet.ordered False even
         # though Meta.ordering still applies -- order_by keeps DRF pagination
         # from warning about an unordered list.
-        return Pharmacy.objects.annotate(
-            location_count=Count("locations", filter=Q(locations__deleted__isnull=True))
-        ).order_by("-created_at")
+        return (
+            Pharmacy.objects.select_related("rx_counter")
+            .annotate(location_count=Count("locations", filter=Q(locations__deleted__isnull=True)))
+            .order_by("-created_at")
+        )

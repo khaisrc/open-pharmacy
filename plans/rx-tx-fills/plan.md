@@ -543,3 +543,9 @@ focus on them:
   from the admin (there is no staff member to attribute them to); the
   change history is read-only; `RxCounter` is editable, which is how a
   pharmacy is onboarded by hand. The layering guard now scans `admin/` too.
+- **Onboarding through the pharmacy API, added after the admin**:
+  `POST`/`PATCH /pharmacies/` take optional write-only `rx_number_seed` and
+  `step`; `PharmacyService` creates or moves the counter under the same row
+  lock issuing takes, refuses a backward move (400) and `step` alone on a
+  pharmacy with no counter, and records both in the change history. The
+  state reads back as `rx_counter` (null until onboarded).

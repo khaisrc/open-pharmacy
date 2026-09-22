@@ -20,7 +20,7 @@ JWT and role design that replaces this is in [`plans/auth/plan.md`](../plans/aut
 | `/patients/` | Who a prescription is written for | `{id}/prescriptions/` |
 | `/prescribers/` | Who wrote it, keyed by NPI | `{id}/prescriptions/` |
 | `/medications/` | What it names, keyed by NDC | NDC is normalized to 11 digits on write |
-| `/pharmacies/` | The organization, independent or chain | `location_count` is computed |
+| `/pharmacies/` | The organization, independent or chain | `location_count` is computed; `rx_number_seed` and `step` on create or update onboard it, read back as `rx_counter` |
 | `/pharmacies/{id}/locations/` | A dispensing site, keyed by NCPDP ID | `{id}/prescriptions/`; carries the pharmacist-in-charge |
 | `/pharmacies/{id}/staff/` | A credentialed person the pharmacy employs | pharmacist, certified technician, technician or intern; keyed by state registration; see [staff.md](staff.md) |
 | `/addresses/` | Postal addresses the records above share | |

@@ -37,8 +37,9 @@ Locally, `seed_local` onboards every pharmacy it knows -- the Acme home
 pharmacy from migration 0003 and the two demo chains -- with `last_issued`
 at 1,000,000,000, and never rewinds one on a re-run. In uat and prod no
 migration creates the row: the starting value is a fact about the pharmacy,
-set at or above the highest number it already holds, and belongs to the
-onboarding step alongside the pharmacy's own record.
+set at or above the highest number it already holds. It is set through the
+API -- `rx_number_seed` and `step` on `POST` or `PATCH /pharmacies/{id}/`
+-- or in the admin's RxCounter page.
 
 ## Serving
 

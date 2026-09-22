@@ -103,8 +103,12 @@ label. It is the next value of the pharmacy organization's counter, shared
 by all of its stores and unique within the pharmacy; two pharmacies may hold
 the same number, and a label or a transfer names the store by its NCPDP ID.
 A pharmacy whose counter has not been seeded cannot create prescriptions
-(409 `rx_counter_not_seeded`); `seed_local` seeds the local ones, and
-"Onboarding a pharmacy" in [deployment.md](deployment.md) covers the rest.
+(409 `rx_counter_not_seeded`). It is seeded by `POST` or `PATCH
+/pharmacies/` with `rx_number_seed` (the value issuing starts after; the
+first number is seed + step) and `step`; the state reads back as
+`rx_counter`, null until then. A seed never moves a counter backwards (400).
+`seed_local` seeds the local ones; "Onboarding a pharmacy" in
+[deployment.md](deployment.md) covers the rest.
 
 `intake_source` is how the order arrived — NCPDP D.0 field 419-DJ,
 Prescription Origin Code, as a word rather than the wire digit: `not_specified`, `provider` (written), `telephone`,
