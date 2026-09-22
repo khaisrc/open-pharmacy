@@ -11,6 +11,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+# Every `run` below goes through bash with pipefail. Naming the shell is what
+# turns it on: the default is plain `bash -e`, where a pipeline reports only
+# its last command, so a failure upstream of a `|` goes unnoticed.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   e2e:
     runs-on: ubuntu-latest
