@@ -33,7 +33,7 @@ The only prerequisite is Docker with Compose v2. No Python, no PostgreSQL on the
 host.
 
 ```bash
-git clone <repo> && cd open-pharmacy
+git clone git@github.com:khaisrc/open-pharmacy.git && cd open-pharmacy
 docker compose up
 ```
 
