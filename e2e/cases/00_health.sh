@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -uo pipefail
-source "$SUITE_DIR/lib/http.sh"
+source "$E2E_DIR/lib/http.sh"
 
 section "the health check"
 when "the health check is called"

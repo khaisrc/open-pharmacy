@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 set -uo pipefail
-source "$SUITE_DIR/lib/http.sh"
-source "$SUITE_DIR/lib/gen.sh"
-source "$SUITE_PATH/lib/gen.sh"
-source "$SUITE_PATH/lib/fixtures.sh"
+source "$E2E_DIR/lib/http.sh"
+source "$E2E_DIR/lib/gen.sh"
+source "$E2E_DIR/lib/fixtures.sh"
 
 make_pharmacy; PH="$NEW_ID"
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
-source "$SUITE_DIR/lib/http.sh"
-source "$SUITE_DIR/lib/gen.sh"
+source "$E2E_DIR/lib/http.sh"
+source "$E2E_DIR/lib/gen.sh"
 
 section "every collection requires credentials"
 for entry in addresses:/addresses/ medications:/medications/ patients:/patients/ \

@@ -8,3 +8,8 @@ staticfiles/
 !.env.local
 !.env.example
 .DS_Store
+
+# The e2e suite writes its report and progress baseline in place.
+e2e/report.html
+e2e/junit.xml
+e2e/.assert-counts

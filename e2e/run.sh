@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
-# Rerunnable curl test framework, shared across API test suites.
+# Rerunnable curl end-to-end suite for the open-pharmacy API.
 # See README.md. Targets bash 3.2, the version macOS ships.
 
 set -uo pipefail
 
-SUITE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export SUITE_DIR
+E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export E2E_DIR
 
 : "${BASE_URL:=http://localhost:8000}"
 : "${API_USER:=admin}"
 : "${API_PASS:=admin}"
 FILTER=""
-SUITE="${SUITE_NAME:-}"
 REPORT_PATH=""
 JUNIT_PATH=""
 : "${JOBS:=8}"
@@ -21,14 +20,12 @@ usage() {
   cat <<'USAGE'
 Usage: ./run.sh [options]
 
-  -s SUITE     which suite to run (a directory with its own cases/) --
-               default: the only such directory found, if there is one
   -f PATTERN   run only case files whose name contains PATTERN
   -p N         run up to N case files concurrently (default 8; 1 is sequential)
   -v           print every request and response
   -x           stop at the first failing assertion (runs sequentially)
-  -r PATH      write the HTML report here (default SUITE/report.html)
-  -j PATH      write JUnit XML here (default SUITE/junit.xml)
+  -r PATH      write the HTML report here (default e2e/report.html)
+  -j PATH      write JUnit XML here (default e2e/junit.xml)
   -R           skip both reports
   -l           list the case files and exit
   -h           this message
@@ -37,15 +34,14 @@ Environment:
   BASE_URL   default http://localhost:8000
   API_USER   default admin
   API_PASS   default admin
-  SUITE_NAME same as -s
   JOBS       same as -p (default 8)
-  NO_COLOR   set to disable colour and the progress display
+  NO_COLOR   set to disable color and the progress display
 
 Results read as Gherkin: a case file is a Feature, each section in it a
 Scenario, fixtures are Given steps, requests are Whens, and the assertions
 that read a response are the Thens and Ands beneath it.
 
-Every run writes an HTML report next to the suite -- one feature per case
+Every run writes an HTML report into e2e/ -- one feature per case
 file, with the full request and response behind a disclosure on each step --
 and a junit.xml beside it for CI.
 
@@ -62,9 +58,8 @@ USAGE
 }
 
 LIST_ONLY=0
-while getopts ":s:f:p:r:j:Rvxlh" opt; do
+while getopts ":f:p:r:j:Rvxlh" opt; do
   case "$opt" in
-    s) SUITE="$OPTARG" ;;
     f) FILTER="$OPTARG" ;;
     p) JOBS="$OPTARG"; JOBS_SET=1 ;;
     r) REPORT_PATH="$OPTARG" ;;
@@ -72,7 +67,7 @@ while getopts ":s:f:p:r:j:Rvxlh" opt; do
     R) NO_REPORT=1 ;;
     v) export VERBOSE=1 ;;
     x) export FAIL_FAST=1 ;;
-    l) LIST_ONLY=1 ;; # case files live under the suite, resolved below
+    l) LIST_ONLY=1 ;;
     h) usage; exit 0 ;;
     \?) echo "unknown option -$OPTARG" >&2; usage >&2; exit 2 ;;
     :)  echo "option -$OPTARG needs a value" >&2; exit 2 ;;
@@ -97,43 +92,23 @@ if [[ -n "${FAIL_FAST:-}" ]]; then
   JOBS=1
 fi
 
-# --- suite selection -----------------------------------------------------
+# --- what this suite points at -----------------------------------------------
+#
+# HEALTH_PATH and AUTH_PROBE_PATH drive the preflight checks below; API_ROOT is
+# the prefix lib/http.sh puts in front of every path a case file writes, and
+# defaults there to ${BASE_URL}/api/v1. DEV_HINT is what a failed preflight
+# tells the reader to run.
 
-if [[ -z "$SUITE" ]]; then
-  candidates=()
-  for d in "$SUITE_DIR"/*/; do
-    [[ -d "${d}cases" ]] && candidates+=("$(basename "$d")")
-  done
-  if [[ ${#candidates[@]} -eq 1 ]]; then
-    SUITE="${candidates[0]}"
-  elif [[ ${#candidates[@]} -eq 0 ]]; then
-    echo "no suite found (no subdirectory has a cases/ folder)" >&2
-    exit 2
-  else
-    echo "multiple suites found (${candidates[*]}) -- pick one with -s" >&2
-    exit 2
-  fi
-fi
+HEALTH_PATH="/api/v1/health/"
+AUTH_PROBE_PATH="/api/v1/patients/"
+DEV_HINT="docker compose up"
+export DEV_HINT
 
-SUITE_PATH="${SUITE_DIR}/${SUITE}"
-export SUITE_PATH
-[[ -d "$SUITE_PATH/cases" ]] || {
-  echo "no such suite: ${SUITE} (expected ${SUITE_PATH}/cases)" >&2
-  exit 2
-}
-: "${REPORT_PATH:=${SUITE_PATH}/report.html}"
-: "${JUNIT_PATH:=${SUITE_PATH}/junit.xml}"
-
-# A suite's own config: HEALTH_PATH and AUTH_PROBE_PATH for the preflight
-# checks below, and optionally API_ROOT (see lib/http.sh) and DEV_HINT.
-# Every suite must provide the first two -- there is no API-shaped default
-# to fall back to.
-source "$SUITE_PATH/suite.env"
-[[ -n "${API_ROOT:-}" ]] && export API_ROOT
-[[ -n "${DEV_HINT:-}" ]] && export DEV_HINT
+: "${REPORT_PATH:=${E2E_DIR}/report.html}"
+: "${JUNIT_PATH:=${E2E_DIR}/junit.xml}"
 
 if [[ $LIST_ONLY -eq 1 ]]; then
-  ls "$SUITE_PATH"/cases/*.sh | xargs -n1 basename
+  ls "$E2E_DIR"/cases/*.sh | xargs -n1 basename
   exit 0
 fi
 
@@ -199,11 +174,11 @@ cleanup() {
 CURSOR_HIDDEN=0
 trap cleanup EXIT
 
-echo "${c_bold}${SUITE} API suite${c_off}  ${c_dim}${BASE_URL}  run ${RUN_ID}${c_off}"
+echo "${c_bold}open-pharmacy e2e${c_off}  ${c_dim}${BASE_URL}  run ${RUN_ID}${c_off}"
 
 started="$(date +%s)"
 files=()
-for f in "$SUITE_PATH"/cases/*.sh; do
+for f in "$E2E_DIR"/cases/*.sh; do
   [[ -n "$FILTER" && "$(basename "$f")" != *"$FILTER"* ]] && continue
   files+=("$f")
 done
@@ -231,7 +206,7 @@ done
 # loop over collections, and -f changes the set -- so the first run of a case
 # shows a count with no bar, and every run after that has a real denominator.
 
-BASELINE="$SUITE_PATH/.assert-counts"
+BASELINE="$E2E_DIR/.assert-counts"
 PROGRESS=0
 if [[ -t 1 && -z "${NO_COLOR:-}" && -z "${VERBOSE:-}" ]]; then
   PROGRESS=1
@@ -463,14 +438,14 @@ if [[ "${failed:-0}" -gt 0 ]]; then
 fi
 
 if [[ -z "${NO_REPORT:-}" ]]; then
-  if python3 "$SUITE_DIR/bin/report.py" \
+  if python3 "$E2E_DIR/bin/report.py" \
        --events "$EVENTS" \
        --out "$REPORT_PATH" \
        --junit "$JUNIT_PATH" \
        --run-id "$RUN_ID" \
        --base-url "$BASE_URL" \
        --seconds "$elapsed" \
-       --suite-name "$SUITE"; then
+       --suite-name open-pharmacy; then
     echo "${c_dim}report: ${REPORT_PATH}${c_off}"
     echo "${c_dim}junit:  ${JUNIT_PATH}${c_off}"
   else

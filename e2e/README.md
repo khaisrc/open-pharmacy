@@ -1,12 +1,14 @@
-# api-tests
+# e2e
 
-A curl-driven test framework, shared across API test suites. `run.sh`, `lib/`
-and `bin/` are the reusable part: request/assertion primitives, an HTML +
-JUnit reporter, and a runner that knows nothing about any particular API.
-A **suite** is a directory alongside them — `open-pharmacy/` today — holding
-its own `cases/*.sh` and a `suite.env` describing how to reach that API.
-Nothing is imported from any service, so a suite exercises its API the way a
-client would.
+A curl-driven end-to-end suite. It talks to a running server over HTTP, logs
+in with a real password, and imports nothing from `pharmacy/` — which is what
+separates it from `pharmacy/tests/`, where the same endpoints are driven in
+process through DRF's `APIClient` with authentication forced, against a
+database pytest builds and throws away. This suite exercises the API the way a
+client would, wire format, auth, rate limits and leftover rows included.
+
+`run.sh` drives it, `lib/` holds the request and assertion primitives, and
+`bin/report.py` renders the run.
 
 Results read as Gherkin. A case file is a **Feature**, each `section` in it a
 **Scenario**, the fixtures it builds are **Given** steps, every request is a
@@ -36,31 +38,26 @@ structure, because every event in the log names the step it belongs to.
 
 ## Running it
 
-```bash
-./run.sh
-```
-
-With one suite directory present, `run.sh` finds it on its own. With more than
-one, pick it explicitly:
+The server has to be up, which locally means the Compose stack:
 
 ```bash
-./run.sh -s open-pharmacy
+docker compose up     # in one terminal
+./e2e/run.sh          # in another
 ```
 
-The API must be up. If it is not, `run.sh` prints that suite's `DEV_HINT`
-(for `open-pharmacy`, `cd ../open-pharmacy && ./scripts/dev.sh`).
+`run.sh` checks `/api/v1/health/` and an authenticated `GET /api/v1/patients/`
+before it runs anything, and says to start Compose if either fails.
 
 Options:
 
 | Flag | Effect |
 | --- | --- |
-| `-s SUITE` | which suite to run (default: the only one present) |
 | `-f PATTERN` | run only case files whose name contains `PATTERN` |
 | `-p N` | run up to N case files concurrently (default 8; `1` is sequential) |
 | `-v` | print every request and response |
 | `-x` | stop at the first failing assertion (runs sequentially) |
-| `-r PATH` | write the HTML report here (default `SUITE/report.html`) |
-| `-j PATH` | write JUnit XML here (default `SUITE/junit.xml`) |
+| `-r PATH` | write the HTML report here (default `e2e/report.html`) |
+| `-j PATH` | write JUnit XML here (default `e2e/junit.xml`) |
 | `-R` | skip both reports |
 | `-l` | list the case files |
 | `-h` | usage |
@@ -72,11 +69,10 @@ Configuration comes from the environment:
 | `BASE_URL` | `http://localhost:8000` |
 | `API_USER` | `admin` |
 | `API_PASS` | `admin` |
-| `SUITE_NAME` | same as `-s` |
 | `JOBS` | same as `-p` (`8`) |
 
 ```bash
-BASE_URL=https://staging.example.com API_PASS=hunter2 ./run.sh -s open-pharmacy
+BASE_URL=https://staging.example.com API_PASS=hunter2 ./e2e/run.sh
 ```
 
 `run.sh` exits non-zero if anything failed, so it drops into CI unchanged.
@@ -130,7 +126,7 @@ failed -- the failure summary names the feature, the scenario and the step,
 but not the request and response that explain it.
 
 A bar is drawn against the number of assertions that case made last time,
-kept in `SUITE/.assert-counts` (untracked). The number is not knowable up
+kept in `e2e/.assert-counts` (untracked). The number is not knowable up
 front, since cases loop over collections and `-f` changes the set, so the
 first run of a case shows a plain count and every run after it has a real
 denominator.
@@ -144,39 +140,7 @@ Redirect stdout, as CI does, and the per-assertion lines come back with no
 escape sequences in them. `-v` and `NO_COLOR` also turn the display off, as
 does a terminal too short to hold the block without scrolling.
 
-## Adding a suite
-
-A suite is a directory containing:
-
-- `cases/*.sh` — the case files, run in filename order (see below)
-- `suite.env` — sourced by `run.sh` before its preflight checks:
-
-  ```bash
-  HEALTH_PATH="/api/v1/health/"     # GET this must return 200 before anything runs
-  AUTH_PROBE_PATH="/api/v1/patients/" # GET this with API_USER/API_PASS must return 200
-  DEV_HINT="cd ../open-pharmacy && ./scripts/dev.sh"  # printed if either check fails
-  # API_ROOT="${BASE_URL}/api/v1"   # optional: overrides lib/http.sh's default
-  ```
-
-- optionally, its own `lib/gen.sh` and/or `lib/fixtures.sh` — anything
-  domain-specific (an NPI check digit, a `make_patient` builder) belongs here,
-  not in the framework's `lib/`. `run.sh` exports `SUITE_PATH` so a case file
-  can source them: `source "$SUITE_PATH/lib/gen.sh"`. The framework's own
-  `lib/gen.sh` (`$SUITE_DIR/lib/gen.sh`) stays limited to what every suite
-  needs — a run tag, `_rand`, `iso_days`, `MISSING_UUID` — with nothing that
-  assumes one API's shape.
-
-`report.html` and `junit.xml` default to living inside the suite directory,
-and the report's title comes from the suite name (`-s`/`SUITE_NAME`).
-
-## The `open-pharmacy` suite
-
-The rest of this document — the fixture and generator conventions, the report
-layout, and the case list — describes the one suite in this repo today,
-`open-pharmacy/`. A second suite would document itself the same way, in its own
-`<suite>/README.md`, once one exists.
-
-### Why it can be run repeatedly
+## Why it can be run repeatedly
 
 The API soft-deletes: `DELETE` hides a row but never removes it. That shapes
 three rules the suite follows.
@@ -184,11 +148,11 @@ three rules the suite follows.
 **Every unique value is generated per run.** `medications.ndc` and
 `prescribers.npi` are unique among *live* rows. The suite does not clean up
 after itself, so a hard-coded NDC would pass the first time and 409 forever
-after. `open-pharmacy/lib/gen.sh` mints a fresh NDC, NPI, NCPDP ID and state-board
-registration number on every call — including a valid NPI check digit, since
-a random ten-digit string is rejected — on top of the phone number and email the framework's own
-`lib/gen.sh` already mints generically. Both draw from `/dev/urandom` rather
-than `$RANDOM`, because this is bash 3.2 (the version macOS ships) where
+after. `lib/gen.sh` mints a fresh NDC, NPI, NCPDP ID and state-board
+registration number on every call — including a valid NPI check digit, since a
+random ten-digit string is rejected — alongside the phone numbers and emails
+every record needs. All of them draw from `/dev/urandom` rather than
+`$RANDOM`, because this is bash 3.2 (the version macOS ships) where
 `$RANDOM` inside `$(...)` inherits the caller's seed and repeats.
 
 **No assertion depends on an absolute count.** The database carries seed data
@@ -206,10 +170,10 @@ patients, prescribers and prescriptions per run, all named with a `qa<pid>` tag
 so they are recognisable. To start clean:
 
 ```bash
-cd ../open-pharmacy && docker compose down -v && ./scripts/dev.sh
+docker compose down -v && docker compose up
 ```
 
-### The report
+## The report
 
 `report.html` opens in a browser with no server behind it. It is the same
 feature file the terminal printed:
@@ -255,7 +219,7 @@ and its `name` is the whole step -- `When POST /patients/ / Then the patient is
 created` -- so a CI failure list reads on its own, without the report open
 beside it.
 
-### What it covers
+## What it covers
 
 | File | Covers |
 | --- | --- |
@@ -274,7 +238,7 @@ beside it.
 
 `bin/report.py` renders the run; `lib/http.sh` writes the event log it reads.
 
-### Adding a case
+## Adding a case
 
 Case files are run in filename order, each in its own bash process. A new one
 starts like this:
@@ -282,10 +246,9 @@ starts like this:
 ```bash
 #!/usr/bin/env bash
 set -uo pipefail
-source "$SUITE_DIR/lib/http.sh"
-source "$SUITE_DIR/lib/gen.sh"
-source "$SUITE_PATH/lib/gen.sh"
-source "$SUITE_PATH/lib/fixtures.sh"
+source "$E2E_DIR/lib/http.sh"
+source "$E2E_DIR/lib/gen.sh"
+source "$E2E_DIR/lib/fixtures.sh"
 
 section "what this scenario is about"
 when "an address is created"
@@ -315,7 +278,7 @@ binds safely instead of being spliced into the filter:
 assert_jq 'any(.results[]; .id == $id)' "it is listed" --arg id "$ID"
 ```
 
-`open-pharmacy/lib/fixtures.sh` builds records — `make_address`,
+`lib/fixtures.sh` builds records — `make_address`,
 `make_medication`, `make_patient`, `make_prescriber`, `make_prescription`,
 `make_pharmacy`, `make_location` and `make_staff`, plus `make_cast` and
 `make_store` for a whole set at once. Each sets `$NEW_ID` rather than echoing, so
