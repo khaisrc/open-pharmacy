@@ -1,4 +1,4 @@
-.PHONY: run reset e2e units lint
+.PHONY: run reset e2e units lint format
 
 # Bring up the full stack: db, migrate, web.
 run:
@@ -24,3 +24,8 @@ units:
 lint:
 	docker compose run --rm web ruff check .
 	docker compose run --rm web ruff format --check .
+
+# Apply ruff's fixes and formatting in place, rather than just checking them.
+format:
+	docker compose run --rm web ruff check --fix .
+	docker compose run --rm web ruff format .
