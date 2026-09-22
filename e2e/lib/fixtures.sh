@@ -255,3 +255,24 @@ _make_store() {
   make_address;                              FX_PHARMACY_ADDRESS="$NEW_ID"
   make_location "$FX_PHARMACY" "$FX_PHARMACY_ADDRESS"; FX_LOCATION="$NEW_ID"
 }
+
+# The pharmacy this deployment is the backend for -- Acme Pharmacy, seeded by
+# migration 0003_seed_acme_pharmacy rather than minted here, so a case that
+# wants a real dispensing site does not have to create a fresh one every run.
+# Looked up over the API rather than the database: if the seed is ever
+# missing, the case fails the same way any other missing fixture would. Sets
+# HOME_PHARMACY and HOME_LOCATION.
+HOME_PHARMACY_NCPDP_ID="4417829"
+HOME_PHARMACY=""; HOME_LOCATION=""
+use_home_pharmacy() { given "the home pharmacy is used" _use_home_pharmacy "$@"; }
+_use_home_pharmacy() {
+  req GET "/pharmacies/?name=$(urlencode "Acme Pharmacy")"
+  [[ "$STATUS" == "200" ]] || die "could not look up the home pharmacy"
+  HOME_PHARMACY="$(jqv '.results[0].id')"
+  [[ -n "$HOME_PHARMACY" && "$HOME_PHARMACY" != "null" ]] || die "the home pharmacy is not seeded"
+
+  req GET "/pharmacies/${HOME_PHARMACY}/locations/?ncpdp_id=${HOME_PHARMACY_NCPDP_ID}"
+  [[ "$STATUS" == "200" ]] || die "could not look up the home pharmacy location"
+  HOME_LOCATION="$(jqv '.results[0].id')"
+  [[ -n "$HOME_LOCATION" && "$HOME_LOCATION" != "null" ]] || die "the home pharmacy location is not seeded"
+}
