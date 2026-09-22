@@ -1,7 +1,13 @@
-.PHONY: run e2e units
+.PHONY: run reset e2e units
 
 # Bring up the full stack: db, migrate, web.
 run:
+	docker compose up --build
+
+# Wipe the local database and bring the stack back up clean: fresh
+# migrations and fresh seed data, no stale schema or demo rows left over.
+reset:
+	docker compose down -v
 	docker compose up --build
 
 
