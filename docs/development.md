@@ -32,6 +32,7 @@ run it from the host:
 ```bash
 docker compose up -d
 ./e2e/run.sh                            # every case file, eight at a time
+./e2e/run.sh 65_fills                   # one case file
 ./e2e/run.sh -f prescriptions -p 1      # one file, streaming as it goes
 ```
 

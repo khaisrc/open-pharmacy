@@ -18,8 +18,10 @@ JOBS_SET=0
 
 usage() {
   cat <<'USAGE'
-Usage: ./run.sh [options]
+Usage: ./run.sh [options] [PATTERN]
 
+  PATTERN      run only case files whose name contains PATTERN, the same as
+               -f (e.g. ./run.sh 65_fills)
   -f PATTERN   run only case files whose name contains PATTERN
   -p N         run up to N case files concurrently (default 8; 1 is sequential)
   -v           print every request and response
@@ -73,6 +75,22 @@ while getopts ":f:p:r:j:Rvxlh" opt; do
     :)  echo "option -$OPTARG needs a value" >&2; exit 2 ;;
   esac
 done
+shift $(( OPTIND - 1 ))
+
+# A bare argument is the filter, so a single case file can be run as
+# `./run.sh 65_fills` without remembering the flag.
+if [[ $# -gt 0 ]]; then
+  if [[ -n "$FILTER" ]]; then
+    echo "pass the filter either as -f or as an argument, not both" >&2
+    exit 2
+  fi
+  FILTER="$1"
+  shift
+  if [[ $# -gt 0 ]]; then
+    echo "only one filter can be given, got: $*" >&2
+    exit 2
+  fi
+fi
 
 case "$JOBS" in
   ''|*[!0-9]*) echo "-p needs a positive whole number, not '${JOBS}'" >&2; exit 2 ;;

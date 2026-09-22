@@ -12,9 +12,10 @@ reset:
 
 
 # Curl-driven black-box suite against a running server (see e2e/README.md).
+# CASE limits the run to case files whose name contains it: make e2e CASE=65_fills
 e2e:
 	docker compose up -d
-	./e2e/run.sh
+	./e2e/run.sh $(CASE)
 
 # Django test suite, run inside the Compose web container (see AGENTS.md).
 units:

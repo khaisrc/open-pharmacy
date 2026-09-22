@@ -34,10 +34,17 @@ docker compose up     # in one terminal
 
 `run.sh` checks `/api/v1/health/` and an authenticated `GET /api/v1/patients/` before it runs anything, and says to start Compose if either fails.
 
+A bare argument names the case files to run, so a single one takes no flag:
+
+```bash
+./e2e/run.sh 65_fills
+```
+
 Options:
 
 | Flag | Effect |
 | --- | --- |
+| `PATTERN` | as `-f`, given as an argument rather than a flag |
 | `-f PATTERN` | run only case files whose name contains `PATTERN` |
 | `-p N` | run up to N case files concurrently (default 8; `1` is sequential) |
 | `-v` | print every request and response |
