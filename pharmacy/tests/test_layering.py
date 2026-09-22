@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 PHARMACY = Path(__file__).resolve().parent.parent
-LAYERS_ABOVE_THE_REPOSITORY = ["views", "serializers", "services"]
+LAYERS_ABOVE_THE_REPOSITORY = ["views", "serializers", "services", "admin"]
 FORBIDDEN = re.compile(r"\.objects\b|\.all_objects\b|select_for_update|serializer\.save\(")
 
 
@@ -51,7 +51,6 @@ def test_nothing_above_the_repository_queries(module):
 # one service that is not named after it.
 WRITTEN_THROUGH_ANOTHER_SERVICE = {
     "field_change": "services.history",
-    "rx_counter": "services.rx_number",
 }
 
 

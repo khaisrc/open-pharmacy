@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
@@ -164,6 +165,28 @@ class Prescription(TimeStampedModel):
         # there is no background sweep, so `services.prescriptions` records
         # `expired` when a write path finds this true.
         return self.expires_at is not None and self.expires_at <= timezone.now()
+
+    def clean(self):
+        # Mirrored in the serializer; here too so an admin form, which calls
+        # full_clean(), refuses these the same way instead of tripping the
+        # CHECK constraint or over-committing the fills.
+        super().clean()
+        if self.written_at and self.expires_at and self.expires_at <= self.written_at:
+            raise ValidationError(
+                {"expires_at": "Expiry must be after the prescription was written."}
+            )
+        if self.pk and self.quantity and self.fills_authorized:
+            dispensed, in_progress = self.fill_totals()
+            held = dispensed + in_progress
+            if self.quantity_authorized < held:
+                raise ValidationError(
+                    {
+                        "fills_authorized": (
+                            f"Cannot authorize {self.quantity_authorized} units when the "
+                            f"fills already hold {held}."
+                        )
+                    }
+                )
 
     def __str__(self):
         return f"{self.medication} for {self.patient}"

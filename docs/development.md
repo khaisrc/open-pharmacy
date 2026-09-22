@@ -64,6 +64,7 @@ pharmacy/repositories/  same split; the only place a query is written
 pharmacy/services/   same split; every write and every rule
 pharmacy/serializers/  same split; duplicate checks in base.py
 pharmacy/views/      same split; adapters: parse, call the service, serialize
+pharmacy/admin/      same split; the Django admin as another adapter over the services
 pharmacy/filters.py  the list filters in docs/api.md
 pharmacy/validators.py  NPI check digit, NDC and NCPDP normalization
 pharmacy/exceptions.py  the error envelope and every 409

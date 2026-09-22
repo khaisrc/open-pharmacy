@@ -103,8 +103,7 @@ class PrescriptionSerializer(serializers.ModelSerializer):
         # How the order arrived is a fact about its entry; it does not change.
         if self.instance is not None and value != self.instance.intake_source:
             raise serializers.ValidationError(
-                "The prescription origin code is set when the prescription is entered "
-                "and cannot be changed."
+                "The intake source is set when the prescription is entered and cannot be changed."
             )
         return value
 

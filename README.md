@@ -43,6 +43,7 @@ That starts PostgreSQL, builds the image, applies migrations, seeds a superuser
 ```bash
 curl -u admin:admin http://localhost:8000/api/v1/prescriptions/
 open http://localhost:8000/api/v1/docs/          # Swagger UI
+open http://localhost:8000/admin/                # Django admin, same admin / admin
 ```
 
 Port 8000 taken? Set `WEB_PORT` in the shell (Compose reads the port mapping

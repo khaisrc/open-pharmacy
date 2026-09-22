@@ -49,6 +49,7 @@ pharmacy/repositories/ same split; the only place a query is written (base.py: R
 pharmacy/services/     same split; every write and every rule (base.py: CrudService)
 pharmacy/serializers/  same split; the live-duplicate check in base.py
 pharmacy/views/        same split; adapters over the two above, nested routes in base.py
+pharmacy/admin/        same split; the Django admin as another adapter (base.py: ServiceModelAdmin)
 pharmacy/filters.py    every list filterset
 pharmacy/validators.py NPI check digit, NDC and NCPDP normalization
 pharmacy/exceptions.py the error envelope and every 409
@@ -80,7 +81,11 @@ repository returns querysets (DRF's filtering, pagination and `nested_list`
 need one) and owns the `select_related` for its model; a service owns the
 transaction, the lock, the refusals and the delete guard
 (`protected_relations` lives on the service); a viewset declares `repository`
-and `service` and never calls `serializer.save()`. Every service write takes
+and `service` and never calls `serializer.save()`. The admin
+(`pharmacy/admin/`, one module per model) is held to the same rule:
+`ServiceModelAdmin` reads through the repository and routes `save_model` and
+`delete_model` through the service, and turns a service refusal into a
+message rather than a 500. Every service write takes
 a `WriteContext` first, built once per request by the base viewset. Model
 methods do not persist. Migrations, `seed_local` and tests use the ORM
 directly; that is where the rule stops.

@@ -2,7 +2,7 @@
 
 | Document | What it covers |
 |---|---|
-| [api.md](api.md) | Base path, authentication, the resource table, sub-resources, soft delete, and how lists paginate, filter, search and order |
+| [api.md](api.md) | Base path, authentication, the resource table, sub-resources, soft delete, how lists paginate, filter, search and order, and the admin |
 | [staff.md](staff.md) | Staff records, the two credentials they carry, `is_active`, and a location's pharmacist-in-charge |
 | [prescriptions.md](prescriptions.md) | The prescription lifecycle, the derived quantities, the fill workflow, `X-Staff-Id`, Rx numbers, the intake source, and the home location |
 | [errors.md](errors.md) | The error envelope and every code the API returns |

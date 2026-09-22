@@ -27,7 +27,7 @@ for what differs from or was not in the text).
 
 Replace the `fills_used` counter with a `Fill` row per dispensing that moves
 through a status workflow, so a transfer under 21 CFR 1306.25 can produce the
-date, location and dispensing identity of every previous fill. Add the
+date, location and dispensing identity of every previous fill. Add the NCPDP
 intake source (NCPDP prescription origin code) and an Rx number to `Prescription`. Add a
 column-level change history for every model. Introduce the service and
 repository layers it is built on.
@@ -531,3 +531,15 @@ focus on them:
   happened is cancelled), and "void/delete" on a dispensing record is a
   choice about what happens to the prescription's totals and the fill's
   sequence — raised for discussion rather than guessed.
+- **Django admin added after v4** ("need an admin UI so that I can manage
+  all the models"): `django.contrib.admin` and `messages` in settings,
+  `/admin/`, and `pharmacy/admin/` as one more adapter package —
+  `ServiceModelAdmin` reads through the repository, writes through the
+  service (so admin edits are audited and a prescription added there is
+  numbered from the counter), and turns a service refusal into a message.
+  `Prescription.clean()` now mirrors the serializer's expiry and
+  authorized-quantity rules so the admin form refuses them as field errors
+  rather than tripping the CHECK. Fills cannot be started or transitioned
+  from the admin (there is no staff member to attribute them to); the
+  change history is read-only; `RxCounter` is editable, which is how a
+  pharmacy is onboarded by hand. The layering guard now scans `admin/` too.

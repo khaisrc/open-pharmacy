@@ -68,3 +68,18 @@ Every list is paginated: `?page=` and `?page_size=` (default 25, max 100), with
 The nested prescription routes (`/patients/{id}/prescriptions/` and so on)
 are the prescription list with one filter pinned, so the same parameters
 work there. Prefix an ordering field with `-` for descending.
+
+## The admin
+
+`/admin/` is Django's admin over every model, for the superuser `seed_local`
+creates (`admin` / `admin` locally). It is one more adapter over the same
+layers as the API: reads come from the repositories and every write goes
+through the services, so an edit made there is audited in the change
+history (attributed to the login, with no staff member), a prescription
+added there gets its Rx number from the pharmacy's counter, and a write the
+service refuses comes back as a message on the page rather than a change.
+What the admin cannot do is what has no login-shaped actor: a fill is
+started and moved through its statuses only through the API, with
+`X-Staff-Id`; the admin shows fills, and edits a pending one's quantity and
+days' supply exactly as `PATCH` would. The change history is read-only
+there, and `RxCounter` is where a pharmacy is onboarded.
