@@ -167,7 +167,7 @@ that already exists.
 
 The cost of all this is rows left behind — a few dozen addresses, medications,
 patients, prescribers and prescriptions per run, all named with a `qa<pid>` tag
-so they are recognisable. To start clean:
+so they are recognizable. To start clean:
 
 ```bash
 docker compose down -v && docker compose up
@@ -184,7 +184,7 @@ feature file the terminal printed:
 - **within it, one Scenario per `section "..."`** — plus a `Background` for
   whatever the case file set up before its first section.
 - **under each Scenario, its Given and When steps in the order they ran**, each
-  labelled with its keyword in the same column as the `Then`s below it. A step
+  labeled with its keyword in the same column as the `Then`s below it. A step
   line carries its English description and a duration -- the method, path and
   status of its request are on the disclosures beneath it, and a Given that
   took several requests labels each of them, status included, underneath.
@@ -260,7 +260,7 @@ assert_jq_eq '.state' 'OR' "state round-trips"
 `when "..."` names the request that follows and is what the step line shows, so
 write it as what the caller is doing rather than as the method and path -- those
 are a disclosure away in the report. A request sent without one still gets a
-step, named after the wire; it reads as the odd one out among its neighbours,
+step, named after the wire; it reads as the odd one out among its neighbors,
 which is how a forgotten `when` makes itself visible.
 
 Write each assertion as the rest of its Then: the keyword and the When above it

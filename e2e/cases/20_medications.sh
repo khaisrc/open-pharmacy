@@ -16,7 +16,7 @@ assert_jq_eq '.formatted_ndc' "$(ndc_display_form "$NDC")" "formatted_ndc is the
 assert_jq_eq '.form' 'tablet' "form round-trips"
 MED="$(jqv .id)"
 
-section "NDC segment formats all normalise to eleven digits"
+section "NDC segment formats all normalize to eleven digits"
 # 4-4-2, 5-3-2 and 5-4-1 denote the same product as 5-4-2; the API pads the
 # short segment so the uniqueness rule can mean what it says.
 check_ndc() {
@@ -25,7 +25,7 @@ check_ndc() {
   req POST /medications/ "$(jq -nc --arg ndc "$sent" --arg n "NDC shape $label $RUN_TAG" \
     '{name: $n, ndc: $ndc, form: "capsule"}')"
   assert_status 201 "it is accepted"
-  assert_jq_eq '.ndc' "$expected" "it normalises to ${expected}"
+  assert_jq_eq '.ndc' "$expected" "it normalizes to ${expected}"
 }
 S442="$(printf '%04d-%04d-%02d' "$(_rand 10000)" "$(_rand 10000)" "$(_rand 100)")"
 check_ndc "$S442" "0${S442//-/}" "4-4-2"

@@ -78,7 +78,7 @@ gen_bad_npi() {
 }
 
 # --- NDC ---------------------------------------------------------------------
-# Hyphenated 5-4-2, which the API stores as its 11-digit normalised form.
+# Hyphenated 5-4-2, which the API stores as its 11-digit normalized form.
 gen_ndc() {
   printf '%05d-%04d-%02d' "$(_rand 100000)" "$(_rand 10000)" "$(_rand 100)"
 }

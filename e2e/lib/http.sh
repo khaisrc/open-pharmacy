@@ -84,7 +84,7 @@ _print_heading() { # _print_heading TEXT
   printf '  %s%s%s\n' "$_c_bold" "$1" "$_c_off"
 }
 
-_print_step() { # _print_step MARKER MARKER_COLOUR KEYWORD TEXT
+_print_step() { # _print_step MARKER MARKER_COLOR KEYWORD TEXT
   printf '  %s%-4s%s %s%-6s%s %s\n' \
     "$2" "$1" "$_c_off" "$_c_dim" "$3" "$_c_off" "$4"
 }
@@ -138,8 +138,8 @@ _when() { # _when FALLBACK -- open a When step, unless a Given owns this request
   [[ $_GIVEN_DEPTH -gt 0 ]] && return 0
   local text="$_WHEN_TEXT"
   _WHEN_TEXT=""
-  # An unlabelled request still gets a step, named after the wire. It reads as
-  # the odd one out among its neighbours, which is the point: the fallback is
+  # An unlabeled request still gets a step, named after the wire. It reads as
+  # the odd one out among its neighbors, which is the point: the fallback is
   # how a forgotten `when` shows up rather than passing unnoticed.
   [[ -n "$text" ]] || text="$1"
   _begin_step when "$text"

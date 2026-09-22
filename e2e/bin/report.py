@@ -204,10 +204,10 @@ def body_block(body, label):
     )
 
 
-def render_exchange(event, labelled):
+def render_exchange(event, labeled):
     """One request/response pair, behind its two disclosures.
 
-    `labelled` adds the method, path and status above them, which a step needs
+    `labeled` adds the method, path and status above them, which a step needs
     only when it made more than one request -- a When's own text already says
     what the single exchange under it was.
     """
@@ -229,7 +229,7 @@ def render_exchange(event, labelled):
         )
 
     label = ""
-    if labelled:
+    if labeled:
         label = f"""
   <div class="flex flex-wrap items-center gap-2 mb-1">
     <span class="badge badge-xs {METHOD_TONE.get(method, "badge-ghost")} font-mono">{e(method)}</span>
@@ -278,7 +278,7 @@ def render_step(step):
     # The status of a single request lives on its Response disclosure, not up
     # here: a step line that carries only its own words reads as a step. A
     # Given names a fixture rather than a request, and the exchanges it took
-    # are labelled -- status included -- individually underneath.
+    # are labeled -- status included -- individually underneath.
     trailing = ""
     if single and first is not None:
         ms = first["seconds"] * 1000
@@ -463,8 +463,8 @@ document.addEventListener('DOMContentLoaded', syncHighlightTheme);
   :root[data-theme="dark"] .theme-light {{ display: none; }}
   :root[data-theme="light"] .theme-dark {{ display: none; }}
   /* highlight.js paints its own surface on the element it highlights, which
-     would leave highlighted bodies a different colour from plain ones. Only
-     its token colours are wanted here. */
+     would leave highlighted bodies a different color from plain ones. Only
+     its token colors are wanted here. */
   pre code.hljs {{ background: transparent; padding: 0; }}
 </style>
 

@@ -59,7 +59,7 @@ req GET "/prescriptions/?ordering=created_at&page_size=100"
 assert_status 200 "the ordered listing is returned"
 assert_jq '[.results[].created_at] == ([.results[].created_at] | sort)' "created_at ascending really is ascending"
 
-# An ordering field the API does not recognise is ignored rather than refused.
+# An ordering field the API does not recognize is ignored rather than refused.
 when "prescriptions are ordered by a field that does not exist"
 req GET "/prescriptions/?ordering=no_such_field"
 assert_status 200 "it is ignored rather than rejected"

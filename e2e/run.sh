@@ -220,7 +220,7 @@ fi
 # concurrent cases would interleave, and the progress display needs the screen.
 BUFFERED=1
 [[ "$JOBS" -eq 1 && $PROGRESS -eq 0 ]] && BUFFERED=0
-# lib/http.sh colours its output on -t 1, which a buffered case never sees.
+# lib/http.sh colors its output on -t 1, which a buffered case never sees.
 [[ $BUFFERED -eq 1 && -t 1 && -z "${NO_COLOR:-}" ]] && export FORCE_COLOR=1
 
 BAR_W=20
@@ -241,9 +241,9 @@ _expected() { # _expected CASE -- assertions it made last run, 0 if unknown
     "$BASELINE" 2>/dev/null || echo 0
 }
 
-# _bar DONE TOTAL WIDTH [FILL_COLOUR] -- the filled run in FILL_COLOUR and the
+# _bar DONE TOTAL WIDTH [FILL_COLOR] -- the filled run in FILL_COLOR and the
 # remainder dim, parted by a half-width glyph so the leading edge reads as an
-# edge rather than as a colour change.
+# edge rather than as a color change.
 _bar() {
   local done="$1" total="$2" width="$3" fill_c="${4:-}" filled i out=""
   if [[ "$total" -le 0 ]]; then filled=0; else filled=$(( done * width / total )); fi
@@ -334,7 +334,7 @@ aborted=0
 # shared with the code below would be left pointing at the last case file on
 # every return -- dispatching the same case repeatedly into one event log.
 if [[ $BUFFERED -eq 0 ]]; then
-  # One case at a time, straight to the terminal: the original behaviour, and
+  # One case at a time, straight to the terminal: the original behavior, and
   # the only mode in which -x can stop the run where it failed.
   for case_path in "${files[@]}"; do
     echo
