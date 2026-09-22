@@ -295,8 +295,6 @@ def render_step(step):
     # badges left on the line are the ones that carry data. The empty span
     # ahead of it is the outcome gutter, which a Given or a When has nothing to
     # put in -- it keeps every keyword in one column down the scenario.
-    text_class = "text-sm break-all" if step.kind == "when" else "text-sm"
-    text_tag = "code" if step.kind == "when" else "span"
 
     assertions = "".join(
         f'<li class="flex gap-2 items-start py-0.5">'
@@ -329,7 +327,7 @@ def render_step(step):
   <div class="flex flex-wrap items-center gap-2">
     <span class="w-9 shrink-0"></span>
     <span class="text-xs font-mono opacity-50 w-10 shrink-0">{step.keyword}</span>
-    <{text_tag} class="{text_class}">{e(step.text)}</{text_tag}>
+    <span class="text-sm">{e(step.text)}</span>
     {trailing}
   </div>
   <ul class="mt-2">{assertions}</ul>

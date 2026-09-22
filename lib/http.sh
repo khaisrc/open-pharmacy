@@ -53,6 +53,11 @@ fi
 # Given; every request is a When; and the assertions that read its response are
 # the Then and Ands beneath it.
 #
+# A step says what the caller was trying to do, in English. The method, the
+# path and the body are in the event log regardless, and the report shows them
+# on the request's own disclosure, so repeating them in the step text would
+# spend the one line that could have said why the request was made.
+#
 # Steps are numbered per case file rather than per section, so an assertion can
 # name its step in the event log without the report having to guess which
 # request a description belonged to. A Given may cover several requests -- one
@@ -67,6 +72,7 @@ _THEN_COUNT=0      # assertions recorded against the current step so far
 THEN_KEYWORD=""    # Then for the first of them, And for the rest
 _GIVEN_DEPTH=0     # >0 while a `given` body is running
 _HEADING_SHOWN=0   # whether a Scenario (or Background) heading has been printed
+_WHEN_TEXT=""      # set by `when`, consumed by the request that follows
 
 # Steps line up in columns: two spaces, a four-wide outcome gutter, then the
 # keyword. Failures stay at the left margin where they are easy to find, and
@@ -120,10 +126,24 @@ given() {
   return $rc
 }
 
-_when() { # _when TEXT -- open a When step, unless a Given owns this request
+# when TEXT -- name the request that follows.
+#
+# A statement rather than a wrapper like `given`, because a When labels exactly
+# one request and the request is often a multi-line payload that reads better
+# on its own. `given` wraps because a fixture builder is several requests that
+# have to fold into one step.
+when() { _WHEN_TEXT="$1"; }
+
+_when() { # _when FALLBACK -- open a When step, unless a Given owns this request
   [[ $_GIVEN_DEPTH -gt 0 ]] && return 0
-  _begin_step when "$1"
-  _print_step "" "" "When" "$1"
+  local text="$_WHEN_TEXT"
+  _WHEN_TEXT=""
+  # An unlabelled request still gets a step, named after the wire. It reads as
+  # the odd one out among its neighbours, which is the point: the fallback is
+  # how a forgotten `when` shows up rather than passing unnoticed.
+  [[ -n "$text" ]] || text="$1"
+  _begin_step when "$text"
+  _print_step "" "" "When" "$text"
 }
 
 _next_then() {
