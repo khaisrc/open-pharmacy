@@ -15,7 +15,10 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: write
+      # The comment step below posts through the Issues API (a PR's
+      # conversation comments live there, not under Pull Requests), which is
+      # what this scope actually gates.
+      issues: write
     steps:
       - uses: actions/checkout@v7
 
