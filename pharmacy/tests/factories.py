@@ -17,7 +17,13 @@ from pharmacy.models import (
     Staff,
     StaffRole,
 )
-from pharmacy.validators import luhn_check_digit
+from pharmacy.validators import US_STATES, luhn_check_digit
+
+# Faker for everything that is a person or a place, sequences for every
+# identifier that has to be unique or valid (NPI, NDC, NCPDP). Deterministic:
+# conftest reseeds factory_boy's random once per session, so a run is
+# reproducible and a name collision, should one ever matter, is repeatable
+# rather than flaky.
 
 
 def make_npi(seed):
@@ -30,21 +36,21 @@ class AddressFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = Address
 
-    line1 = factory.Sequence(lambda n: f"{n + 1} Test Street")
-    city = "Ithaca"
-    state = "NY"
-    postal_code = "14850"
+    line1 = factory.Faker("street_address")
+    city = factory.Faker("city")
+    state = factory.Faker("random_element", elements=sorted(US_STATES))
+    postal_code = factory.Faker("postcode")
 
 
 class PatientFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = Patient
 
-    first_name = factory.Sequence(lambda n: f"Pat{n}")
-    last_name = "Tester"
-    dob = "1990-01-01"
-    gender = "other"
-    phone_number = "+15551234567"
+    first_name = factory.Faker("first_name")
+    last_name = factory.Faker("last_name")
+    dob = factory.Faker("date_of_birth", minimum_age=18, maximum_age=90)
+    gender = factory.Faker("random_element", elements=["female", "male", "other", "unknown"])
+    phone_number = factory.Faker("numerify", text="+1555#######")
     address = factory.SubFactory(AddressFactory)
 
 
@@ -52,8 +58,8 @@ class PrescriberFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = Prescriber
 
-    first_name = factory.Sequence(lambda n: f"Doc{n}")
-    last_name = "Writer"
+    first_name = factory.Faker("first_name")
+    last_name = factory.Faker("last_name")
     practitioner_type = "MD"
     npi = factory.Sequence(make_npi)
     address = factory.SubFactory(AddressFactory)
@@ -78,7 +84,7 @@ class PharmacyFactory(factory.django.DjangoModelFactory):
         model = Pharmacy
         skip_postgeneration_save = True
 
-    name = factory.Sequence(lambda n: f"Test Pharmacy {n}")
+    name = factory.Faker("company")
     rx_counter = factory.RelatedFactory(
         "pharmacy.tests.factories.RxCounterFactory", factory_related_name="pharmacy"
     )
@@ -99,7 +105,7 @@ class PharmacyLocationFactory(factory.django.DjangoModelFactory):
 
     pharmacy = factory.SubFactory(PharmacyFactory)
     ncpdp_id = factory.Sequence(lambda n: f"{1000000 + n}")
-    phone_number = "+15559876543"
+    phone_number = factory.Faker("numerify", text="+1555#######")
     address = factory.SubFactory(AddressFactory)
 
 
@@ -110,8 +116,8 @@ class StaffFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = Staff
 
-    first_name = factory.Sequence(lambda n: f"Staff{n}")
-    last_name = "Member"
+    first_name = factory.Faker("first_name")
+    last_name = factory.Faker("last_name")
     role = StaffRole.PHARMACIST
     registration_state = "OR"
     registration_number = factory.Sequence(lambda n: f"RPH.{n:06d}")

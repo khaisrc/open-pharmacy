@@ -549,3 +549,9 @@ focus on them:
   lock issuing takes, refuses a backward move (400) and `step` alone on a
   pharmacy with no counter, and records both in the change history. The
   state reads back as `rx_counter` (null until onboarded).
+- **Review follow-ups**: `Repository.live()` is `all()`; the admin URL
+  comment is gone; `faker` is an explicit dependency and supplies the
+  people and addresses in `seed_local` (fixed seed, so re-runs stay
+  idempotent) and in the test factories (reseeded once per session). The
+  stores, the clinic and every identifier stay hand-written or
+  sequence-generated.

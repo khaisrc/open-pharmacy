@@ -10,6 +10,7 @@ here and nowhere else; settings never see it.
 import logging
 import os
 
+import factory.random
 import pytest
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -33,6 +34,11 @@ from .factories import (
 )
 
 EMBEDDED_DB_VARIABLE = "PHARMACY_TEST_DB"
+
+# The factories draw names, dates and addresses from Faker. One seed per
+# session makes every run produce the same people, so a test that happens to
+# depend on a drawn value fails the same way every time rather than sometimes.
+factory.random.reseed_random("open-pharmacy")
 
 # Filled in by the session fixture below and printed in the terminal summary,
 # so a run always says which Postgres it was against.

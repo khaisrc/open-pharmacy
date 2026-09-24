@@ -176,8 +176,13 @@ actions carry `@extend_schema`. `spectacular --fail-on-warn` must pass.
 `pytestmark = pytest.mark.django_db` and group cases in classes by behavior.
 Build data with the factories in `pharmacy/tests/factories.py` and the fixtures
 in `conftest.py` (`api` is an authenticated client, `anon` is not) rather than
-creating models inline. Prefer `@pytest.mark.parametrize` over near-duplicate
-tests. A refused write is tested on the status code *and* the error `code`.
+creating models inline. People and places come from Faker (reseeded once per
+session in `conftest.py`, so runs are reproducible); identifiers that must be
+unique or valid -- NPI, NDC, NCPDP, Rx numbers -- come from sequences. A test
+that needs a particular name sets it explicitly. `seed_local` uses Faker the
+same way, from a fixed seed, so a re-run finds the same people. Prefer
+`@pytest.mark.parametrize` over near-duplicate tests. A refused write is
+tested on the status code *and* the error `code`.
 
 The `e2e/` suite is the other half and is written in bash, not Python. It runs
 against a served stack over real HTTP, so it is where authentication, the error
