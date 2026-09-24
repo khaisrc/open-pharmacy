@@ -7,6 +7,14 @@ models.py for makemigrations and no Meta.app_label is needed.
 
 from .address import Address
 from .base import TimeStampedModel
+from .field_change import FieldChange
+from .fill import (
+    FILL_IN_FLIGHT_STATUSES,
+    FILL_TERMINAL_STATUSES,
+    FILL_TRANSITIONS,
+    Fill,
+    FillStatus,
+)
 from .medication import Medication, MedicationForm
 from .patient import Gender, Patient
 from .pharmacy import Pharmacy
@@ -14,10 +22,13 @@ from .pharmacy_location import LocationType, PharmacyLocation
 from .prescriber import PractitionerType, Prescriber
 from .prescription import (
     ALLOWED_TRANSITIONS,
+    RX_NUMBER_MAX,
     TERMINAL_STATUSES,
+    IntakeSource,
     Prescription,
     PrescriptionStatus,
 )
+from .rx_counter import RxCounter
 from .staff import (
     ROLES_REQUIRING_CERTIFICATION,
     ROLES_REQUIRING_REGISTRATION,
@@ -28,12 +39,20 @@ from .staff import (
 
 __all__ = [
     "ALLOWED_TRANSITIONS",
+    "FILL_IN_FLIGHT_STATUSES",
+    "FILL_TERMINAL_STATUSES",
+    "FILL_TRANSITIONS",
     "ROLES_REQUIRING_CERTIFICATION",
     "ROLES_REQUIRING_REGISTRATION",
+    "RX_NUMBER_MAX",
     "TERMINAL_STATUSES",
     "Address",
     "CertificationBody",
+    "FieldChange",
+    "Fill",
+    "FillStatus",
     "Gender",
+    "IntakeSource",
     "LocationType",
     "Medication",
     "MedicationForm",
@@ -44,6 +63,7 @@ __all__ = [
     "Prescriber",
     "Prescription",
     "PrescriptionStatus",
+    "RxCounter",
     "Staff",
     "StaffRole",
     "TimeStampedModel",

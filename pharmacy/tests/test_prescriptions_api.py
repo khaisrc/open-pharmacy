@@ -1,14 +1,24 @@
+from decimal import Decimal
+
 import pytest
-from django.db import connection
+from django.db import connection, transaction
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
-from pharmacy.models import Prescription, PrescriptionStatus
+from pharmacy import repositories
+from pharmacy.models import FieldChange, Prescription, PrescriptionStatus, RxCounter
 
-from .factories import PrescriptionFactory
+from .factories import (
+    FillFactory,
+    PharmacyFactory,
+    PharmacyLocationFactory,
+    PrescriptionFactory,
+    RxCounterFactory,
+)
+from .helpers import PRESCRIPTIONS as URL
+from .helpers import dispense, prescription_body, start_fill
 
 pytestmark = pytest.mark.django_db
-URL = "/api/v1/prescriptions/"
 
 
 class TestStatusLifecycle:
@@ -52,9 +62,10 @@ class TestTerminalIsClosed:
     """A completed, cancelled or expired prescription is a closed record: no
     field of it changes through PATCH or PUT, not only status."""
 
-    def test_completed_cannot_gain_fills(self, api):
+    def test_completed_cannot_gain_fills(self, api, as_pharmacist):
         rx = PrescriptionFactory(status=PrescriptionStatus.ACTIVE, fills_authorized=1)
-        assert api.post(f"{URL}{rx.pk}/fill/").data["status"] == PrescriptionStatus.COMPLETED
+        dispense(as_pharmacist, rx)
+        assert api.get(f"{URL}{rx.pk}/").data["status"] == PrescriptionStatus.COMPLETED
 
         response = api.patch(f"{URL}{rx.pk}/", {"fills_authorized": 3}, format="json")
         assert response.status_code == 409
@@ -80,7 +91,7 @@ class TestTerminalIsClosed:
         assert rx.quantity == 30
 
     def test_put_of_the_current_body_is_still_a_200(self, api):
-        rx = PrescriptionFactory(status=PrescriptionStatus.COMPLETED, fills_used=3)
+        rx = PrescriptionFactory(status=PrescriptionStatus.COMPLETED)
         body = api.get(f"{URL}{rx.pk}/").data
         body.update(
             {
@@ -121,29 +132,50 @@ class TestLazyExpiry:
         rx.refresh_from_db()
         assert rx.status == PrescriptionStatus.EXPIRED
 
-    def test_fill_and_cancel_cost_the_same_queries(self, api):
-        """The locked re-read must keep the joins the response serializer
-        needs, or fill pays a query per nested object that cancel does not."""
-        rx = PrescriptionFactory(status=PrescriptionStatus.ACTIVE, fills_authorized=3)
-        with CaptureQueriesContext(connection) as fill:
-            assert api.post(f"{URL}{rx.pk}/fill/").status_code == 200
-        with CaptureQueriesContext(connection) as cancel:
-            assert api.post(f"{URL}{rx.pk}/cancel/").status_code == 200
-        assert len(fill) == len(cancel)
+    def test_locked_reread_keeps_the_joins_of_the_read_queryset(self, prescription):
+        """The locked re-read in a write path must carry the same joins the
+        read path does, or a write pays a query per nested object that a
+        read does not. Both now come from one repository definition; this
+        pins that the lock does not drop them."""
+        with CaptureQueriesContext(connection) as queries:
+            with transaction.atomic():
+                locked = repositories.prescriptions.get_locked(prescription.pk)
+        selects = [q["sql"] for q in queries if q["sql"].startswith("SELECT")]
+        assert len(selects) == 1  # one statement: the joins ride along, no prefetch
+        assert "FOR UPDATE OF" in selects[0]
+        for related in ("patient", "prescriber", "medication", "pharmacy_location"):
+            assert related in locked._state.fields_cache, related
+        assert "pharmacy" in locked.pharmacy_location._state.fields_cache
 
 
 class TestFill:
-    def test_fill_increments_and_completes_on_the_last_one(self, api):
+    """The prescription as the fill workflow sees it. The workflow itself is
+    in test_fills_api.py; this is what it does to the prescription."""
+
+    def test_dispensing_counts_and_completes_on_the_last_quantity(self, api, as_pharmacist):
         rx = PrescriptionFactory(status=PrescriptionStatus.ACTIVE, fills_authorized=2)
 
-        first = api.post(f"{URL}{rx.pk}/fill/")
-        assert first.status_code == 200
-        assert first.data["fills_used"] == 1
-        assert first.data["status"] == PrescriptionStatus.ACTIVE
+        dispense(as_pharmacist, rx)
+        first = api.get(f"{URL}{rx.pk}/").data
+        assert first["fills_used"] == 1
+        assert first["quantity_dispensed"] == 30
+        assert first["status"] == PrescriptionStatus.ACTIVE
 
-        second = api.post(f"{URL}{rx.pk}/fill/")
-        assert second.data["fills_used"] == 2
-        assert second.data["status"] == PrescriptionStatus.COMPLETED
+        dispense(as_pharmacist, rx)
+        second = api.get(f"{URL}{rx.pk}/").data
+        assert second["fills_used"] == 2
+        assert second["quantity_remaining"] == 0
+        assert second["status"] == PrescriptionStatus.COMPLETED
+
+    def test_a_pending_fill_is_not_yet_dispensed(self, api, as_pharmacist):
+        """POST starts a fill; nothing is dispensed until complete/."""
+        rx = PrescriptionFactory(status=PrescriptionStatus.ACTIVE, fills_authorized=1)
+        assert start_fill(as_pharmacist, rx).status_code == 201
+        body = api.get(f"{URL}{rx.pk}/").data
+        assert body["quantity_dispensed"] == 0
+        assert body["quantity_in_progress"] == 30
+        assert body["quantity_remaining"] == 0
+        assert body["status"] == PrescriptionStatus.ACTIVE
 
     @pytest.mark.parametrize(
         "status",
@@ -154,30 +186,66 @@ class TestFill:
             PrescriptionStatus.EXPIRED,
         ],
     )
-    def test_fill_only_works_on_active(self, api, status):
+    def test_fill_only_works_on_active(self, as_pharmacist, status):
         rx = PrescriptionFactory(status=status)
-        response = api.post(f"{URL}{rx.pk}/fill/")
+        response = start_fill(as_pharmacist, rx)
         assert response.status_code == 409
         assert response.data["error"]["code"] == "not_active"
 
-    def test_fill_after_expiry_sets_expired_and_409s(self, api):
+    def test_fill_after_expiry_sets_expired_and_409s(self, as_pharmacist):
         now = timezone.now()
         rx = PrescriptionFactory(
             status=PrescriptionStatus.ACTIVE,
             written_at=now - timezone.timedelta(days=30),
             expires_at=now - timezone.timedelta(days=1),
         )
-        response = api.post(f"{URL}{rx.pk}/fill/")
+        response = start_fill(as_pharmacist, rx)
         assert response.status_code == 409
         assert response.data["error"]["code"] == "expired"
         rx.refresh_from_db()
         assert rx.status == PrescriptionStatus.EXPIRED
 
-    def test_fill_exhausted_is_409(self, api):
-        rx = PrescriptionFactory(status=PrescriptionStatus.ACTIVE, fills_authorized=1, fills_used=1)
-        response = api.post(f"{URL}{rx.pk}/fill/")
+    def test_fill_exhausted_is_409(self, as_pharmacist):
+        rx = PrescriptionFactory(status=PrescriptionStatus.ACTIVE, fills_authorized=1)
+        FillFactory(prescription=rx, completed=True)
+        response = start_fill(as_pharmacist, rx)
         assert response.status_code == 409
         assert response.data["error"]["code"] == "no_fills_remaining"
+        assert response.data["error"]["details"]["quantity_remaining"] == 0
+
+    def test_fractions_are_reported_to_eight_places(self, api, as_pharmacist):
+        rx = PrescriptionFactory(status=PrescriptionStatus.ACTIVE, quantity=90, fills_authorized=1)
+        dispense(as_pharmacist, rx, quantity_dispensed=30)
+        body = api.get(f"{URL}{rx.pk}/").data
+        assert body["fills_used"] == Decimal("0.33333333")
+        assert body["fills_remaining"] == Decimal("0.66666667")
+        assert body["quantity_remaining"] == 60
+
+
+class TestAuthorizedQuantityEdits:
+    """quantity × fills_authorized cannot drop below what the fills hold."""
+
+    def test_cannot_authorize_less_than_dispensed(self, api):
+        rx = PrescriptionFactory(status=PrescriptionStatus.ACTIVE, fills_authorized=3)
+        FillFactory(prescription=rx, completed=True)
+        FillFactory(prescription=rx, completed=True)
+        response = api.patch(f"{URL}{rx.pk}/", {"fills_authorized": 1}, format="json")
+        assert response.status_code == 400
+        assert "fills_authorized" in response.data["error"]["details"]
+
+    def test_a_fill_in_progress_counts_as_held(self, api):
+        rx = PrescriptionFactory(status=PrescriptionStatus.ACTIVE, quantity=30, fills_authorized=1)
+        FillFactory(prescription=rx, quantity_dispensed=30)
+        response = api.patch(f"{URL}{rx.pk}/", {"quantity": 20}, format="json")
+        assert response.status_code == 400
+        assert "quantity" in response.data["error"]["details"]
+
+    def test_raising_the_authorization_is_fine(self, api):
+        rx = PrescriptionFactory(status=PrescriptionStatus.ACTIVE, fills_authorized=1)
+        FillFactory(prescription=rx, completed=True)
+        response = api.patch(f"{URL}{rx.pk}/", {"fills_authorized": 2}, format="json")
+        assert response.status_code == 200
+        assert response.data["fills_remaining"] == 1
 
 
 class TestCancel:
@@ -197,6 +265,18 @@ class TestCancel:
         response = api.post(f"{URL}{rx.pk}/cancel/")
         assert response.status_code == 409
         assert response.data["error"]["code"] == "already_terminal"
+
+    def test_cancel_with_a_fill_in_progress_is_409(self, api):
+        """The fill is cancelled first, then the prescription; cancelling
+        underneath a fill being prepared would strand it."""
+        rx = PrescriptionFactory(status=PrescriptionStatus.ACTIVE)
+        fill = FillFactory(prescription=rx, verified=True)
+        response = api.post(f"{URL}{rx.pk}/cancel/")
+        assert response.status_code == 409
+        assert response.data["error"]["code"] == "fill_in_progress"
+        assert response.data["error"]["details"]["fill_id"] == str(fill.pk)
+        rx.refresh_from_db()
+        assert rx.status == PrescriptionStatus.ACTIVE
 
 
 class TestDeleteVersusCancel:
@@ -225,16 +305,7 @@ class TestDeleteVersusCancel:
 class TestWriteAndRead:
     def test_writes_flat_and_reads_nested(self, api, patient, prescriber, medication, location):
         response = api.post(
-            URL,
-            {
-                "patient_id": str(patient.pk),
-                "prescriber_id": str(prescriber.pk),
-                "medication_id": str(medication.pk),
-                "pharmacy_location_id": str(location.pk),
-                "dose_amount": "1 tablet",
-                "quantity": 30,
-            },
-            format="json",
+            URL, prescription_body(patient, prescriber, medication, location), format="json"
         )
         assert response.status_code == 201
         body = response.data
@@ -266,15 +337,9 @@ class TestExpiryIsCheckedAgainstTheDefaultWrittenAt:
         database constraint answer with a 500."""
         response = api.post(
             URL,
-            {
-                "patient_id": str(patient.pk),
-                "prescriber_id": str(prescriber.pk),
-                "medication_id": str(medication.pk),
-                "pharmacy_location_id": str(location.pk),
-                "dose_amount": "1 tablet",
-                "quantity": 30,
-                "expires_at": "2020-01-01T00:00:00Z",
-            },
+            prescription_body(
+                patient, prescriber, medication, location, expires_at="2020-01-01T00:00:00Z"
+            ),
             format="json",
         )
         assert response.status_code == 400
@@ -286,14 +351,7 @@ class TestQuantityAndFillsArePositive:
 
     @pytest.mark.parametrize("field", ["quantity", "fills_authorized"])
     def test_zero_is_rejected(self, api, patient, prescriber, medication, location, field):
-        payload = {
-            "patient_id": str(patient.pk),
-            "prescriber_id": str(prescriber.pk),
-            "medication_id": str(medication.pk),
-            "pharmacy_location_id": str(location.pk),
-            "dose_amount": "1 tablet",
-            "quantity": 30,
-        }
+        payload = prescription_body(patient, prescriber, medication, location)
         payload[field] = 0
         response = api.post(URL, payload, format="json")
         assert response.status_code == 400
@@ -302,15 +360,131 @@ class TestQuantityAndFillsArePositive:
     def test_one_is_accepted(self, api, patient, prescriber, medication, location):
         response = api.post(
             URL,
-            {
-                "patient_id": str(patient.pk),
-                "prescriber_id": str(prescriber.pk),
-                "medication_id": str(medication.pk),
-                "pharmacy_location_id": str(location.pk),
-                "dose_amount": "1 tablet",
-                "quantity": 1,
-                "fills_authorized": 1,
-            },
+            prescription_body(
+                patient, prescriber, medication, location, quantity=1, fills_authorized=1
+            ),
             format="json",
         )
         assert response.status_code == 201
+
+
+class TestRxNumber:
+    """The counter value alone, per pharmacy, issued on create."""
+
+    def create(self, api, patient, prescriber, medication, location):
+        return api.post(
+            URL, prescription_body(patient, prescriber, medication, location), format="json"
+        )
+
+    def test_consecutive_within_a_pharmacy_across_its_stores(
+        self, api, patient, prescriber, medication
+    ):
+        pharmacy = PharmacyFactory()
+        store_a, store_b = PharmacyLocationFactory.create_batch(2, pharmacy=pharmacy)
+        numbers = [
+            self.create(api, patient, prescriber, medication, store).data["rx_number"]
+            for store in (store_a, store_b, store_a)
+        ]
+        assert numbers == [1, 2, 3]
+        assert RxCounter.objects.get(pharmacy=pharmacy).last_issued == 3
+
+    def test_independent_between_pharmacies(self, api, patient, prescriber, medication):
+        first = self.create(api, patient, prescriber, medication, PharmacyLocationFactory())
+        second = self.create(api, patient, prescriber, medication, PharmacyLocationFactory())
+        # Two pharmacies may hold the same number; the store on the label
+        # tells them apart.
+        assert first.data["rx_number"] == second.data["rx_number"] == 1
+
+    def test_starts_after_last_issued_and_honours_step(self, api, patient, prescriber, medication):
+        location = PharmacyLocationFactory(pharmacy__rx_counter=None)
+        RxCounterFactory(pharmacy=location.pharmacy, last_issued=4_000, step=5)
+        assert self.create(api, patient, prescriber, medication, location).data["rx_number"] == 4005
+        assert self.create(api, patient, prescriber, medication, location).data["rx_number"] == 4010
+
+    @pytest.mark.parametrize("seeded", [False, None], ids=["no counter row", "null last_issued"])
+    def test_unseeded_pharmacy_cannot_issue(self, api, patient, prescriber, medication, seeded):
+        location = PharmacyLocationFactory(pharmacy__rx_counter=None)
+        if seeded is None:
+            RxCounterFactory(pharmacy=location.pharmacy, last_issued=None)
+        response = self.create(api, patient, prescriber, medication, location)
+        assert response.status_code == 409
+        assert response.data["error"]["code"] == "rx_counter_not_seeded"
+        assert response.data["error"]["details"]["pharmacy_id"] == str(location.pharmacy.pk)
+        # Nothing was written: the refusal is inside the create's transaction.
+        assert not Prescription.objects.filter(pharmacy_location=location).exists()
+        assert not FieldChange.objects.filter(model="prescription").exists()
+
+    def test_twelve_digits_is_the_ceiling(self, api, patient, prescriber, medication):
+        location = PharmacyLocationFactory(pharmacy__rx_counter=None)
+        RxCounterFactory(pharmacy=location.pharmacy, last_issued=999_999_999_999)
+        response = self.create(api, patient, prescriber, medication, location)
+        assert response.status_code == 409
+        assert response.data["error"]["code"] == "rx_number_exhausted"
+
+    def test_home_location_uses_the_home_pharmacy_counter(
+        self, api, patient, prescriber, medication, home_rx_counter
+    ):
+        response = api.post(URL, prescription_body(patient, prescriber, medication), format="json")
+        assert response.status_code == 201
+        assert response.data["rx_number"] == 1
+        home_rx_counter.refresh_from_db()
+        assert home_rx_counter.last_issued == 1
+
+    def test_read_only_on_the_wire(self, api, patient, prescriber, medication, location):
+        response = api.post(
+            URL,
+            prescription_body(patient, prescriber, medication, location, rx_number=777),
+            format="json",
+        )
+        assert response.status_code == 201
+        assert response.data["rx_number"] == 1
+
+
+class TestIntakeSource:
+    """NCPDP D.0 419-DJ: required on entry, immutable after."""
+
+    def test_required_on_create(self, api, patient, prescriber, medication, location):
+        body = prescription_body(patient, prescriber, medication, location)
+        del body["intake_source"]
+        response = api.post(URL, body, format="json")
+        assert response.status_code == 400
+        assert "intake_source" in response.data["error"]["details"]
+
+    @pytest.mark.parametrize(
+        "code", ["not_specified", "provider", "telephone", "electronic", "fax", "pharmacy"]
+    )
+    def test_every_code_round_trips(self, api, patient, prescriber, medication, location, code):
+        body = prescription_body(patient, prescriber, medication, location, intake_source=code)
+        response = api.post(URL, body, format="json")
+        assert response.status_code == 201
+        assert response.data["intake_source"] == code
+
+    def test_unknown_code_is_400(self, api, patient, prescriber, medication, location):
+        body = prescription_body(patient, prescriber, medication, location, intake_source="written")
+        assert api.post(URL, body, format="json").status_code == 400
+
+    @pytest.mark.parametrize("method", ["patch", "put"])
+    def test_immutable_after_create(self, api, method):
+        rx = PrescriptionFactory(intake_source="provider")
+        body = api.get(f"{URL}{rx.pk}/").data
+        body.update(
+            {
+                "patient_id": body["patient"]["id"],
+                "prescriber_id": body["prescriber"]["id"],
+                "medication_id": body["medication"]["id"],
+                "pharmacy_location_id": body["pharmacy_location"]["id"],
+                "intake_source": "electronic",
+            }
+        )
+        payload = body if method == "put" else {"intake_source": "electronic"}
+        response = getattr(api, method)(f"{URL}{rx.pk}/", payload, format="json")
+        assert response.status_code == 400
+        assert "intake_source" in response.data["error"]["details"]
+        rx.refresh_from_db()
+        assert rx.intake_source == "provider"
+
+    def test_resending_the_same_code_is_fine(self, api):
+        rx = PrescriptionFactory(intake_source="provider")
+        body = {"intake_source": "provider"}
+        response = api.patch(f"{URL}{rx.pk}/", body, format="json")
+        assert response.status_code == 200

@@ -4,7 +4,8 @@ source "$E2E_DIR/lib/http.sh"
 source "$E2E_DIR/lib/gen.sh"
 source "$E2E_DIR/lib/fixtures.sh"
 
-make_pharmacy;      PH="$NEW_ID"
+RX_SEED="$(_rand 900000000)"
+make_pharmacy '{"rx_number_seed": '"$RX_SEED"'}'; PH="$NEW_ID"
 make_address;       ADDR="$NEW_ID"
 
 section "create under a pharmacy"

@@ -1,6 +1,7 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
+from pharmacy import repositories
 from pharmacy.models import Medication
 from pharmacy.validators import normalize_ndc
 
@@ -34,7 +35,7 @@ class MedicationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(exc.messages) from exc
 
         reject_live_duplicate(
-            Medication.objects.filter(ndc=normalized),
+            repositories.medications.find(ndc=normalized),
             self.instance,
             record="medication",
             field="ndc",

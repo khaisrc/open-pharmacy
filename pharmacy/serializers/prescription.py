@@ -1,17 +1,9 @@
-from django.conf import settings
 from django.utils import timezone
 from rest_framework import serializers
 
+from pharmacy import repositories
 from pharmacy.exceptions import Conflict
-from pharmacy.models import (
-    ALLOWED_TRANSITIONS,
-    Medication,
-    Patient,
-    PharmacyLocation,
-    Prescriber,
-    Prescription,
-    PrescriptionStatus,
-)
+from pharmacy.models import ALLOWED_TRANSITIONS, Prescription, PrescriptionStatus
 
 from .medication import MedicationSummarySerializer
 from .patient import PatientSummarySerializer
@@ -26,12 +18,12 @@ TRANSITION_HINTS = {
         "POST /prescriptions/{id}/cancel/ is what cancels a prescription."
     ),
     PrescriptionStatus.COMPLETED: (
-        "A prescription completes on its own when POST /prescriptions/{id}/fill/ "
-        "uses the last authorized fill."
+        "A prescription completes on its own when a fill dispenses the last of its "
+        "authorized quantity: POST /prescriptions/{id}/fills/{fill_id}/complete/."
     ),
     PrescriptionStatus.EXPIRED: (
         "A prescription expires on its own once expires_at has passed; the next "
-        "POST /prescriptions/{id}/fill/ records it."
+        "fill, cancel or update records it."
     ),
 }
 
@@ -41,26 +33,38 @@ class PrescriptionSerializer(serializers.ModelSerializer):
 
     patient = PatientSummarySerializer(read_only=True)
     patient_id = serializers.PrimaryKeyRelatedField(
-        source="patient", queryset=Patient.objects.all(), write_only=True
+        source="patient", queryset=repositories.patients.all(), write_only=True
     )
     prescriber = PrescriberSummarySerializer(read_only=True)
     prescriber_id = serializers.PrimaryKeyRelatedField(
-        source="prescriber", queryset=Prescriber.objects.all(), write_only=True
+        source="prescriber", queryset=repositories.prescribers.all(), write_only=True
     )
     medication = MedicationSummarySerializer(read_only=True)
     medication_id = serializers.PrimaryKeyRelatedField(
-        source="medication", queryset=Medication.objects.all(), write_only=True
+        source="medication", queryset=repositories.medications.all(), write_only=True
     )
     pharmacy_location = PharmacyLocationSummarySerializer(read_only=True)
     pharmacy_location_id = serializers.PrimaryKeyRelatedField(
         source="pharmacy_location",
-        queryset=PharmacyLocation.objects.all(),
+        queryset=repositories.pharmacy_locations.all(),
         # Optional on the wire, not in the database: validate() substitutes the
         # home pharmacy location when a client leaves it out.
         required=False,
         write_only=True,
     )
-    fills_remaining = serializers.IntegerField(read_only=True)
+    rx_number = serializers.IntegerField(read_only=True)
+    # Every quantity is derived from the fills; the integers are the record
+    # and the two fractions are for display, to eight places.
+    quantity_authorized = serializers.IntegerField(read_only=True)
+    quantity_dispensed = serializers.IntegerField(read_only=True)
+    quantity_in_progress = serializers.IntegerField(read_only=True)
+    quantity_remaining = serializers.IntegerField(read_only=True)
+    fills_used = serializers.DecimalField(
+        max_digits=20, decimal_places=8, coerce_to_string=False, read_only=True
+    )
+    fills_remaining = serializers.DecimalField(
+        max_digits=20, decimal_places=8, coerce_to_string=False, read_only=True
+    )
 
     class Meta:
         model = Prescription
@@ -74,9 +78,15 @@ class PrescriptionSerializer(serializers.ModelSerializer):
             "medication_id",
             "pharmacy_location",
             "pharmacy_location_id",
+            "rx_number",
+            "intake_source",
             "dose_amount",
             "quantity",
             "fills_authorized",
+            "quantity_authorized",
+            "quantity_dispensed",
+            "quantity_in_progress",
+            "quantity_remaining",
             "fills_used",
             "fills_remaining",
             "instructions",
@@ -87,7 +97,15 @@ class PrescriptionSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "fills_used", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate_intake_source(self, value):
+        # How the order arrived is a fact about its entry; it does not change.
+        if self.instance is not None and value != self.instance.intake_source:
+            raise serializers.ValidationError(
+                "The intake source is set when the prescription is entered and cannot be changed."
+            )
+        return value
 
     def validate_status(self, value):
         if self.instance is None:
@@ -121,26 +139,15 @@ class PrescriptionSerializer(serializers.ModelSerializer):
             return f"A '{current}' prescription is terminal; its status no longer changes."
         return f"From '{current}' this endpoint can set only: {', '.join(sorted(allowed))}."
 
-    def _home_pharmacy_location(self):
-        """The dispensing site to use when a client names none.
-
-        This service backs a single pharmacy, so a prescription written through
-        it is dispensed at that pharmacy's location and a client should not have
-        to say so. The location is read from HOME_PHARMACY_LOCATION_NCPDP_ID
-        rather than inferred from "whichever one exists", so a second store
-        opening -- or a test creating its own location -- cannot change which
-        site a prescription is written against.
-        """
-        return PharmacyLocation.objects.filter(
-            ncpdp_id=settings.HOME_PHARMACY_LOCATION_NCPDP_ID
-        ).first()
-
     def validate(self, attrs):
         if self.instance is not None and self.instance.is_terminal:
             self._reject_changes_to_terminal(attrs)
 
         if self.instance is None and attrs.get("pharmacy_location") is None:
-            location = self._home_pharmacy_location()
+            # This service backs a single pharmacy, so a prescription written
+            # through it is dispensed at that pharmacy's location and a client
+            # should not have to say so.
+            location = repositories.pharmacy_locations.home()
             if location is None:
                 raise serializers.ValidationError(
                     {
@@ -165,13 +172,26 @@ class PrescriptionSerializer(serializers.ModelSerializer):
                 {"expires_at": "Expiry must be after the prescription was written."}
             )
 
-        authorized = attrs.get("fills_authorized", getattr(self.instance, "fills_authorized", 1))
-        used = getattr(self.instance, "fills_used", 0)
-        if authorized < used:
-            raise serializers.ValidationError(
-                {"fills_authorized": f"Cannot authorize fewer fills than the {used} already used."}
-            )
+        if self.instance is not None:
+            self._reject_authorizing_less_than_dispensed(attrs)
         return attrs
+
+    def _reject_authorizing_less_than_dispensed(self, attrs):
+        """The authorized quantity cannot drop below what the fills already
+        hold, dispensed or in progress. Reported on whichever of the two
+        fields the request changed."""
+        quantity = attrs.get("quantity", self.instance.quantity)
+        fills_authorized = attrs.get("fills_authorized", self.instance.fills_authorized)
+        dispensed, in_progress = self.instance.fill_totals()
+        held = dispensed + in_progress
+        if quantity * fills_authorized < held:
+            changed = [f for f in ("quantity", "fills_authorized") if f in attrs]
+            message = (
+                f"Cannot authorize {quantity * fills_authorized} units when the fills "
+                f"already hold {held} ({dispensed} dispensed, {in_progress} in progress)."
+            )
+            fields = changed or ["fills_authorized"]
+            raise serializers.ValidationError(dict.fromkeys(fields, message))
 
     def _reject_changes_to_terminal(self, attrs):
         """A completed, cancelled or expired prescription is a closed record.

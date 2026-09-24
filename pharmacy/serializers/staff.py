@@ -1,6 +1,7 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
+from pharmacy import repositories
 from pharmacy.models import Staff
 from pharmacy.models.staff import credential_problems
 from pharmacy.validators import validate_npi, validate_us_state
@@ -63,7 +64,7 @@ class StaffSerializer(serializers.ModelSerializer):
             return value
         validate_npi(value)
         reject_live_duplicate(
-            Staff.objects.filter(npi=value),
+            repositories.staff.find(npi=value),
             self.instance,
             record="staff member",
             field="npi",
@@ -88,7 +89,7 @@ class StaffSerializer(serializers.ModelSerializer):
 
         if number:
             reject_live_duplicate(
-                Staff.objects.filter(registration_state=state, registration_number=number),
+                repositories.staff.find(registration_state=state, registration_number=number),
                 self.instance,
                 record="staff member",
                 field="registration_number",

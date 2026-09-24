@@ -8,13 +8,16 @@ a typo away from planting a known-password superuser in a deployed environment.
 import os
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
+from faker import Faker
 
 from pharmacy.models import (
     Address,
+    IntakeSource,
     LocationType,
     Medication,
     MedicationForm,
@@ -25,9 +28,47 @@ from pharmacy.models import (
     Prescriber,
     Prescription,
     PrescriptionStatus,
+    RxCounter,
     Staff,
     StaffRole,
 )
+from pharmacy.validators import US_STATES, luhn_check_digit
+
+# Where every local pharmacy's Rx numbers start. High enough that a number
+# never looks like a sequence position, and the same for every pharmacy so a
+# local label is obviously local.
+RX_COUNTER_START = 1_000_000_000
+
+# The people are made up by Faker from this seed, so every boot invents the
+# same people: get_or_create keys on the name and birth date it produces, and
+# a re-run finds them rather than inserting a second cast. Changing the seed,
+# or the number of draws before a person, changes the cast -- an old local
+# database then keeps its old people alongside the new.
+FAKER_SEED = 4417829
+
+
+def fake_address(fake, **defaults):
+    """A US postal address the validators accept, keyed on line1 and ZIP."""
+    return Address.objects.get_or_create(
+        line1=fake.street_address(),
+        postal_code=fake.postcode(),
+        defaults={
+            "city": fake.city(),
+            "state": fake.random_element(sorted(US_STATES)),
+            "line2": fake.random_element(["", "", fake.secondary_address()]),
+            **defaults,
+        },
+    )[0]
+
+
+def fake_phone(fake):
+    return fake.numerify("+1607555####")
+
+
+def fake_npi(fake):
+    """A structurally valid NPI: nine digits plus the Luhn check digit."""
+    body = fake.numerify("1########")
+    return body + str(luhn_check_digit("80840" + body))
 
 
 class Command(BaseCommand):
@@ -64,6 +105,13 @@ class Command(BaseCommand):
             self.stdout.write(f"Superuser {username!r} already exists.")
 
     def _seed_demo_data(self):
+        fake = Faker("en_US")
+        fake.seed_instance(FAKER_SEED)
+
+        # The stores and the clinic are written by hand: they carry the
+        # identifiers a claim would (NCPDP, NPI) and the two pharmacy shapes
+        # the demo is about. Every person, and every person's address, is
+        # Faker's.
         addresses = {
             key: Address.objects.get_or_create(
                 line1=line1,
@@ -76,8 +124,6 @@ class Command(BaseCommand):
                 "cvs_b": ("744 S Meadow St", "Suite 2", "Ithaca", "NY", "14850"),
                 "cvs_c": ("1104 Dryden Rd", "", "Ithaca", "NY", "14850"),
                 "clinic": ("21 Medical Park Dr", "Suite 300", "Ithaca", "NY", "14850"),
-                "patient_a": ("9 Cayuga St", "Apt 4B", "Ithaca", "NY", "14850"),
-                "patient_b": ("332 Pine Tree Rd", "", "Ithaca", "NY", "14850"),
             }.items()
         }
 
@@ -100,6 +146,19 @@ class Command(BaseCommand):
                 "website": "https://northstar.example",
             },
         )
+
+        # A local pharmacy is onboarded as soon as it exists: without a
+        # seeded counter, creating a prescription at any of its stores is a
+        # 409 rx_counter_not_seeded. The home pharmacy (migration 0003's
+        # Acme row) gets one too. get_or_create, so a re-run never rewinds
+        # a counter that has since issued numbers.
+        home = PharmacyLocation.objects.filter(
+            ncpdp_id=settings.HOME_PHARMACY_LOCATION_NCPDP_ID
+        ).first()
+        for pharm in (corner, chain, *([home.pharmacy] if home else [])):
+            RxCounter.objects.get_or_create(
+                pharmacy=pharm, defaults={"last_issued": RX_COUNTER_START}
+            )
 
         locations = {}
         for key, (pharm, store, ncpdp, npi, addr, ltype, hours) in {
@@ -125,34 +184,20 @@ class Command(BaseCommand):
         # a technician of each kind, so every registration rule is visible
         # from a plain boot. Registered staff are keyed on the registration;
         # the unregistered technician on name and employer, the only identity
-        # such a record has.
+        # such a record has. The credentials are fixed; the people are not.
         staff = {}
-        for key, (first, last, role, state, number, body, cert, npi, pharm) in {
-            "ortiz": (
-                "Elena",
-                "Ortiz",
+        for key, (role, state, number, body, cert, npi, pharm) in {
+            "corner_rph": (
                 StaffRole.PHARMACIST,
                 "NY",
                 "RPH.023417",
                 "",
                 "",
-                "1356728844",
+                fake_npi(fake),
                 corner,
             ),
-            "walsh": (
-                "Brendan",
-                "Walsh",
-                StaffRole.PHARMACIST,
-                "NY",
-                "RPH.031205",
-                "",
-                "",
-                "1205849874",
-                chain,
-            ),
-            "kim": (
-                "Soo-jin",
-                "Kim",
+            "chain_rph": (StaffRole.PHARMACIST, "NY", "RPH.031205", "", "", fake_npi(fake), chain),
+            "chain_cpht": (
                 StaffRole.CERTIFIED_TECHNICIAN,
                 "NY",
                 "RPT.118902",
@@ -161,8 +206,9 @@ class Command(BaseCommand):
                 "",
                 chain,
             ),
-            "diaz": ("Marco", "Diaz", StaffRole.TECHNICIAN, "", "", "", "", "", corner),
+            "corner_tech": (StaffRole.TECHNICIAN, "", "", "", "", "", corner),
         }.items():
+            first, last = fake.first_name(), fake.last_name()
             lookup = (
                 {"registration_state": state, "registration_number": number}
                 if number
@@ -183,7 +229,7 @@ class Command(BaseCommand):
                 },
             )[0]
 
-        for loc, pic in (("corner", "ortiz"), ("north_a", "walsh")):
+        for loc, pic in (("corner", "corner_rph"), ("north_a", "chain_rph")):
             if locations[loc].pharmacist_in_charge_id is None:
                 locations[loc].pharmacist_in_charge = staff[pic]
                 locations[loc].save(update_fields=["pharmacist_in_charge", "updated_at"])
@@ -199,105 +245,123 @@ class Command(BaseCommand):
                 ndc=ndc, defaults={"name": name, "strength": strength, "form": form}
             )[0]
 
-        prescribers = {}
-        for key, (first, last, npi, ptype) in {
-            "chen": ("Alice", "Chen", "1234567893", PractitionerType.MD),
-            "okafor": ("Daniel", "Okafor", "1861234569", PractitionerType.NP),
-        }.items():
-            prescribers[key] = Prescriber.objects.get_or_create(
-                npi=npi,
+        # Prescribers are keyed on the NPI, patients on name and birth date;
+        # both deterministic from the seed above.
+        prescribers = [
+            Prescriber.objects.get_or_create(
+                npi=fake_npi(fake),
                 defaults={
-                    "first_name": first,
-                    "last_name": last,
+                    "first_name": fake.first_name(),
+                    "last_name": fake.last_name(),
                     "practitioner_type": ptype,
                     "address": addresses["clinic"],
                 },
             )[0]
+            for ptype in (PractitionerType.MD, PractitionerType.NP, PractitionerType.DO)
+        ]
 
-        patients = {}
-        for key, (first, last, dob, gender, phone, addr) in {
-            "rivera": ("Maria", "Rivera", "1981-04-12", "female", "+16075551201", "patient_a"),
-            "novak": ("Peter", "Novak", "1967-11-30", "male", "+16075551202", "patient_b"),
-        }.items():
-            patients[key] = Patient.objects.get_or_create(
-                first_name=first,
-                last_name=last,
-                dob=dob,
-                defaults={
-                    "gender": gender,
-                    "phone_number": phone,
-                    "email": f"{first.lower()}.{last.lower()}@example.local",
-                    "address": addresses[addr],
-                    "sms_opt_in": False,
-                },
-            )[0]
+        patients = []
+        for _ in range(6):
+            gender = fake.random_element(["female", "male", "other"])
+            first = {
+                "female": fake.first_name_female,
+                "male": fake.first_name_male,
+                "other": fake.first_name_nonbinary,
+            }[gender]()
+            last = fake.last_name()
+            patients.append(
+                Patient.objects.get_or_create(
+                    first_name=first,
+                    last_name=last,
+                    dob=fake.date_of_birth(minimum_age=18, maximum_age=90),
+                    defaults={
+                        "gender": gender,
+                        "phone_number": fake_phone(fake),
+                        "email": f"{first}.{last}@example.local".lower(),
+                        "address": fake_address(fake),
+                        "sms_opt_in": fake.boolean(chance_of_getting_true=30),
+                    },
+                )[0]
+            )
 
         now = timezone.now()
         # Each (patient, prescriber, medication) triple below is distinct, so it
         # is the identity a re-run looks up. The key must not involve time: a
         # lookup on written_at would match nothing after a day and re-insert
         # all four on every later boot.
+        #
+        # The Rx numbers are written directly: this command is fixture data
+        # outside the service layer. They sit below RX_COUNTER_START so they
+        # can never collide with a number the counter issues. No fills are
+        # seeded, which is why the one terminal demo prescription is
+        # cancelled rather than completed: completed would claim a dispensing
+        # no fill row describes.
         demo_prescriptions = [
             (
-                "rivera",
-                "chen",
+                0,
+                0,
                 "lisinopril",
                 "north_a",
+                1001,
+                IntakeSource.ELECTRONIC,
                 "1 tablet",
                 30,
                 6,
-                2,
                 PrescriptionStatus.ACTIVE,
                 "Take one tablet by mouth daily.",
             ),
             (
-                "rivera",
-                "okafor",
+                0,
+                1,
                 "amoxicillin",
                 "north_a",
+                1002,
+                IntakeSource.PROVIDER,
                 "1 capsule",
                 21,
                 1,
-                0,
                 PrescriptionStatus.ACTIVE,
                 "One capsule three times daily for 7 days.",
             ),
             (
-                "novak",
-                "chen",
+                1,
+                0,
                 "metformin",
                 "corner",
+                1,
+                IntakeSource.TELEPHONE,
                 "2 tablets",
                 60,
                 3,
-                3,
-                PrescriptionStatus.COMPLETED,
+                PrescriptionStatus.CANCELLED,
                 "Two tablets with the evening meal.",
             ),
             (
-                "novak",
-                "okafor",
+                1,
+                2,
                 "albuterol",
                 "north_c",
+                1003,
+                IntakeSource.FAX,
                 "2 puffs",
                 1,
                 2,
-                0,
                 PrescriptionStatus.ACTIVE,
                 "Two puffs as needed.",
             ),
         ]
-        for pat, presc, med, loc, dose, qty, auth, used, stat, sig in demo_prescriptions:
+        for pat, presc, med, loc, rx, origin, dose, qty, auth, stat, sig in demo_prescriptions:
             Prescription.objects.get_or_create(
                 patient=patients[pat],
                 prescriber=prescribers[presc],
                 medication=medications[med],
                 defaults={
                     "pharmacy_location": locations[loc],
+                    "rx_number": rx,
+                    "intake_source": origin,
                     "dose_amount": dose,
                     "quantity": qty,
                     "fills_authorized": auth,
-                    "fills_used": used,
                     "status": stat,
                     "instructions": sig,
                     "written_at": now,
@@ -310,6 +374,7 @@ class Command(BaseCommand):
                 f"Demo data ready: {Pharmacy.objects.count()} pharmacies, "
                 f"{PharmacyLocation.objects.count()} locations, "
                 f"{Staff.objects.count()} staff, "
+                f"{RxCounter.objects.count()} Rx counters, "
                 f"{Prescription.objects.count()} prescriptions."
             )
         )

@@ -1,4 +1,5 @@
 from .address import AddressViewSet
+from .fill import FillViewSet, PrescriptionFillsViewSet
 from .health import health
 from .medication import MedicationViewSet
 from .patient import PatientViewSet
@@ -10,6 +11,8 @@ from .staff import StaffViewSet
 
 __all__ = [
     "AddressViewSet",
+    "FillViewSet",
+    "PrescriptionFillsViewSet",
     "MedicationViewSet",
     "PatientViewSet",
     "PharmacyLocationViewSet",

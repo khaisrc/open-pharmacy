@@ -15,6 +15,8 @@ dependencies = [
     "django-cors-headers>=4.9.0",
     "whitenoise>=6.12.0",
     "gunicorn>=26.2.0",
+    # Demo people in seed_local; also what factory_boy draws on in the tests.
+    "faker>=40.39.0",
 ]
 
 [dependency-groups]
@@ -25,8 +27,10 @@ dev = [
     "ruff>=0.16.8",
     # Embedded PostgreSQL for running the suite on a host with no Postgres.
     # Opt-in through PHARMACY_TEST_DB=embedded in pharmacy/tests/conftest.py;
-    # Compose and CI keep using the real server in DATABASE_URL.
-    "pgserver>=0.1.4",
+    # Compose and CI keep using the real server in DATABASE_URL. No wheels
+    # exist for linux/aarch64, which is what the Compose images resolve to
+    # on Apple Silicon hosts, so restrict it to platforms it actually ships for.
+    "pgserver>=0.1.4; sys_platform == 'darwin' or sys_platform == 'win32' or platform_machine == 'x86_64'",
 ]
 
 [tool.ruff]

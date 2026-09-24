@@ -3,6 +3,9 @@ from django.utils import timezone
 
 from pharmacy.models import (
     Address,
+    Fill,
+    FillStatus,
+    IntakeSource,
     Medication,
     Patient,
     Pharmacy,
@@ -10,10 +13,17 @@ from pharmacy.models import (
     Prescriber,
     Prescription,
     PrescriptionStatus,
+    RxCounter,
     Staff,
     StaffRole,
 )
-from pharmacy.validators import luhn_check_digit
+from pharmacy.validators import US_STATES, luhn_check_digit
+
+# Faker for everything that is a person or a place, sequences for every
+# identifier that has to be unique or valid (NPI, NDC, NCPDP). Deterministic:
+# conftest reseeds factory_boy's random once per session, so a run is
+# reproducible and a name collision, should one ever matter, is repeatable
+# rather than flaky.
 
 
 def make_npi(seed):
@@ -26,21 +36,21 @@ class AddressFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = Address
 
-    line1 = factory.Sequence(lambda n: f"{n + 1} Test Street")
-    city = "Ithaca"
-    state = "NY"
-    postal_code = "14850"
+    line1 = factory.Faker("street_address")
+    city = factory.Faker("city")
+    state = factory.Faker("random_element", elements=sorted(US_STATES))
+    postal_code = factory.Faker("postcode")
 
 
 class PatientFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = Patient
 
-    first_name = factory.Sequence(lambda n: f"Pat{n}")
-    last_name = "Tester"
-    dob = "1990-01-01"
-    gender = "other"
-    phone_number = "+15551234567"
+    first_name = factory.Faker("first_name")
+    last_name = factory.Faker("last_name")
+    dob = factory.Faker("date_of_birth", minimum_age=18, maximum_age=90)
+    gender = factory.Faker("random_element", elements=["female", "male", "other", "unknown"])
+    phone_number = factory.Faker("numerify", text="+1555#######")
     address = factory.SubFactory(AddressFactory)
 
 
@@ -48,8 +58,8 @@ class PrescriberFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = Prescriber
 
-    first_name = factory.Sequence(lambda n: f"Doc{n}")
-    last_name = "Writer"
+    first_name = factory.Faker("first_name")
+    last_name = factory.Faker("last_name")
     practitioner_type = "MD"
     npi = factory.Sequence(make_npi)
     address = factory.SubFactory(AddressFactory)
@@ -66,10 +76,27 @@ class MedicationFactory(factory.django.DjangoModelFactory):
 
 
 class PharmacyFactory(factory.django.DjangoModelFactory):
+    """Onboarded: the pharmacy comes with a seeded Rx counter, so a
+    prescription can be created against any of its stores through the API.
+    Pass rx_counter=None for one that has not been."""
+
     class Meta:
         model = Pharmacy
+        skip_postgeneration_save = True
 
-    name = factory.Sequence(lambda n: f"Test Pharmacy {n}")
+    name = factory.Faker("company")
+    rx_counter = factory.RelatedFactory(
+        "pharmacy.tests.factories.RxCounterFactory", factory_related_name="pharmacy"
+    )
+
+
+class RxCounterFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = RxCounter
+
+    pharmacy = factory.SubFactory(PharmacyFactory, rx_counter=None)
+    last_issued = 0
+    step = 1
 
 
 class PharmacyLocationFactory(factory.django.DjangoModelFactory):
@@ -78,7 +105,7 @@ class PharmacyLocationFactory(factory.django.DjangoModelFactory):
 
     pharmacy = factory.SubFactory(PharmacyFactory)
     ncpdp_id = factory.Sequence(lambda n: f"{1000000 + n}")
-    phone_number = "+15559876543"
+    phone_number = factory.Faker("numerify", text="+1555#######")
     address = factory.SubFactory(AddressFactory)
 
 
@@ -89,8 +116,8 @@ class StaffFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = Staff
 
-    first_name = factory.Sequence(lambda n: f"Staff{n}")
-    last_name = "Member"
+    first_name = factory.Faker("first_name")
+    last_name = factory.Faker("last_name")
     role = StaffRole.PHARMACIST
     registration_state = "OR"
     registration_number = factory.Sequence(lambda n: f"RPH.{n:06d}")
@@ -105,9 +132,39 @@ class PrescriptionFactory(factory.django.DjangoModelFactory):
     prescriber = factory.SubFactory(PrescriberFactory)
     medication = factory.SubFactory(MedicationFactory)
     pharmacy_location = factory.SubFactory(PharmacyLocationFactory)
+    # Through the ORM, not the service, so the number is the factory's own.
+    rx_number = factory.Sequence(lambda n: 100_000 + n)
+    intake_source = IntakeSource.PROVIDER
     dose_amount = "1 tablet"
     quantity = 30
     fills_authorized = 3
-    fills_used = 0
     status = PrescriptionStatus.ACTIVE
     written_at = factory.LazyFunction(timezone.now)
+
+
+class FillFactory(factory.django.DjangoModelFactory):
+    """A pending fill of one written quantity at the prescription's location.
+    `completed=True` and `verified=True` are the other two shapes the
+    constraints allow."""
+
+    class Meta:
+        model = Fill
+
+    class Params:
+        verified = factory.Trait(
+            status=FillStatus.VERIFIED, verified_by=factory.SubFactory(StaffFactory)
+        )
+        completed = factory.Trait(
+            status=FillStatus.COMPLETED,
+            verified_by=factory.SubFactory(StaffFactory),
+            dispensed_at=factory.LazyFunction(timezone.now),
+        )
+
+    prescription = factory.SubFactory(PrescriptionFactory)
+    sequence = factory.LazyAttribute(
+        lambda o: Fill.all_objects.filter(prescription=o.prescription).count() + 1
+    )
+    pharmacy_location = factory.LazyAttribute(lambda o: o.prescription.pharmacy_location)
+    operator = factory.SubFactory(StaffFactory)
+    status = FillStatus.PENDING
+    quantity_dispensed = factory.LazyAttribute(lambda o: o.prescription.quantity)

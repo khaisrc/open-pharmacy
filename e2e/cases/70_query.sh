@@ -43,16 +43,29 @@ when "a page of one is asked for"
 req GET "/prescriptions/?page_size=1"
 assert_jq '.results | length == 1' "one result comes back"
 
+# written_at is user-supplied and often lands exactly on the second, and DRF
+# renders a zero microsecond component by dropping it rather than printing
+# .000000 -- so a plain string sort puts, say, "...:50Z" after "...:50.5Z"
+# even though the wire-clean timestamp is the earlier instant. norm pads the
+# fractional part back on before comparing, so ties (same instant twice) and
+# same-second-different-precision neighbors both sort the way they really
+# happened rather than by an accident of DRF's rendering.
 section "ordering"
 when "prescriptions are ordered by when they were written"
 req GET "/prescriptions/?ordering=written_at&page_size=100"
 assert_status 200 "the ordered listing is returned"
-assert_jq '[.results[].written_at] == ([.results[].written_at] | sort)' "ascending order really is ascending"
+assert_jq '
+  def norm: if test("\\.") then . else sub("Z$"; ".000000Z") end;
+  [.results[].written_at | norm] as $a | $a == ($a | sort)
+' "ascending order really is ascending"
 
 when "that order is reversed"
 req GET "/prescriptions/?ordering=-written_at&page_size=100"
 assert_status 200 "the ordered listing is returned"
-assert_jq '[.results[].written_at] == ([.results[].written_at] | sort | reverse)' "descending order really is descending"
+assert_jq '
+  def norm: if test("\\.") then . else sub("Z$"; ".000000Z") end;
+  [.results[].written_at | norm] as $a | $a == ($a | sort | reverse)
+' "descending order really is descending"
 
 when "prescriptions are ordered by when they were created"
 req GET "/prescriptions/?ordering=created_at&page_size=100"

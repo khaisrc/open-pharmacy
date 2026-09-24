@@ -1,8 +1,10 @@
+from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 
 # Versioning happens once, here, so app-level routes stay version-agnostic.
 urlpatterns = [
+    path("admin/", admin.site.urls),
     path("api/v1/", include(("pharmacy.urls", "pharmacy"), namespace="v1")),
     path("api/v1/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(

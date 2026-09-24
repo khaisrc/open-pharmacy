@@ -3,7 +3,7 @@ reached only through its pharmacy."""
 
 import pytest
 
-from pharmacy.models import PharmacyLocation
+from pharmacy.models import FieldChange, Pharmacy, PharmacyLocation, RxCounter
 
 from .factories import (
     AddressFactory,
@@ -13,6 +13,7 @@ from .factories import (
     StaffFactory,
     make_npi,
 )
+from .helpers import prescription_body
 
 pytestmark = pytest.mark.django_db
 PHARMACIES = "/api/v1/pharmacies/"
@@ -291,3 +292,95 @@ class TestPharmacistInCharge:
         )
         body = api.get(locations_url(pharmacist.pharmacy, location)).data
         assert body["pharmacist_in_charge"]["id"] == str(pharmacist.pk)
+
+
+class TestOnboarding:
+    """A pharmacy issues Rx numbers once it has a counter; rx_number_seed and
+    step on create or update are how it gets one."""
+
+    def create_prescription(self, api, pharmacy, patient, prescriber, medication):
+        location = PharmacyLocationFactory(pharmacy=pharmacy)
+        return api.post(
+            "/api/v1/prescriptions/",
+            prescription_body(patient, prescriber, medication, location),
+            format="json",
+        )
+
+    def test_create_with_a_seed_onboards(self, api, patient, prescriber, medication):
+        response = api.post(
+            PHARMACIES,
+            {"name": "Seeded", "rx_number_seed": 1_000_000_000, "step": 2},
+            format="json",
+        )
+        assert response.status_code == 201
+        assert response.data["rx_counter"] == {"last_issued": 1_000_000_000, "step": 2}
+        assert "rx_number_seed" not in response.data
+        pharmacy = Pharmacy.objects.get(pk=response.data["id"])
+        created = self.create_prescription(api, pharmacy, patient, prescriber, medication)
+        assert created.status_code == 201
+        assert created.data["rx_number"] == 1_000_000_002
+        assert FieldChange.objects.filter(model="rxcounter", field="last_issued").exists()
+
+    def test_create_without_a_seed_is_not_onboarded(self, api, patient, prescriber, medication):
+        response = api.post(PHARMACIES, {"name": "Bare"}, format="json")
+        assert response.status_code == 201
+        assert response.data["rx_counter"] is None
+        pharmacy = Pharmacy.objects.get(pk=response.data["id"])
+        refused = self.create_prescription(api, pharmacy, patient, prescriber, medication)
+        assert refused.status_code == 409
+        assert refused.data["error"]["code"] == "rx_counter_not_seeded"
+
+    def test_patch_seeds_a_pharmacy_that_has_no_counter(self, api):
+        pharmacy = PharmacyFactory(rx_counter=None)
+        response = api.patch(f"{PHARMACIES}{pharmacy.pk}/", {"rx_number_seed": 500}, format="json")
+        assert response.status_code == 200
+        assert response.data["rx_counter"] == {"last_issued": 500, "step": 1}
+        assert not FieldChange.objects.filter(model="pharmacy", record_id=pharmacy.pk).exists()
+
+    def test_patch_moves_a_counter_forward_and_changes_its_step(self, api, pharmacy):
+        counter = RxCounter.objects.get(pharmacy=pharmacy)
+        counter.last_issued = 10
+        counter.save()
+        response = api.patch(
+            f"{PHARMACIES}{pharmacy.pk}/", {"rx_number_seed": 20, "step": 5}, format="json"
+        )
+        assert response.status_code == 200
+        assert response.data["rx_counter"] == {"last_issued": 20, "step": 5}
+        (row,) = FieldChange.objects.filter(model="rxcounter", field="last_issued")
+        assert (row.old_value, row.new_value) == (10, 20)
+
+    def test_a_counter_never_moves_backwards(self, api, pharmacy):
+        counter = RxCounter.objects.get(pharmacy=pharmacy)
+        counter.last_issued = 10
+        counter.save()
+        response = api.patch(f"{PHARMACIES}{pharmacy.pk}/", {"rx_number_seed": 9}, format="json")
+        assert response.status_code == 400
+        assert "rx_number_seed" in response.data["error"]["details"]
+        counter.refresh_from_db()
+        assert counter.last_issued == 10
+
+    def test_step_alone_needs_a_counter(self, api):
+        pharmacy = PharmacyFactory(rx_counter=None)
+        response = api.patch(f"{PHARMACIES}{pharmacy.pk}/", {"step": 2}, format="json")
+        assert response.status_code == 400
+        assert "step" in response.data["error"]["details"]
+        assert not RxCounter.objects.filter(pharmacy=pharmacy).exists()
+
+    @pytest.mark.parametrize(
+        "body", [{"rx_number_seed": -1}, {"rx_number_seed": 10**12}, {"step": 0}]
+    )
+    def test_out_of_range_is_400(self, api, body):
+        response = api.post(PHARMACIES, {"name": "X", **body}, format="json")
+        assert response.status_code == 400
+
+    def test_a_refused_seed_leaves_the_pharmacy_unwritten(self, api):
+        """One transaction: a bad seed on create means no pharmacy either."""
+        pharmacy = PharmacyFactory(rx_counter=None)
+        before = Pharmacy.objects.count()
+        response = api.patch(
+            f"{PHARMACIES}{pharmacy.pk}/", {"name": "Renamed", "step": 3}, format="json"
+        )
+        assert response.status_code == 400
+        pharmacy.refresh_from_db()
+        assert pharmacy.name != "Renamed"
+        assert Pharmacy.objects.count() == before

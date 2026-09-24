@@ -108,6 +108,7 @@ _make_prescription() {
     patient_id: $p,
     prescriber_id: $d,
     medication_id: $m,
+    intake_source: "provider",
     dose_amount: "1 tablet",
     quantity: 30,
     fills_authorized: 1,
@@ -208,6 +209,42 @@ _make_staff() {
   NEW_ID="$(jqv .id)"
 }
 
+# The two people the fill workflow needs, and the pharmacy that employs them.
+# A technician starts a fill and only a pharmacist may verify it, so a case
+# that dispenses anything needs both. Sets FX_PHARMACY, FX_PHARMACIST and
+# FX_TECHNICIAN.
+FX_PHARMACIST=""; FX_TECHNICIAN=""
+make_dispensing_team() { given "a pharmacy with a pharmacist and a technician exists" _make_dispensing_team "$@"; }
+_make_dispensing_team() {
+  make_pharmacy;                                  FX_PHARMACY="$NEW_ID"
+  make_staff "$FX_PHARMACY";                      FX_PHARMACIST="$NEW_ID"
+  make_staff "$FX_PHARMACY" '{"role":"technician"}'; FX_TECHNICIAN="$NEW_ID"
+}
+
+# make_dispensed_fill PRESCRIPTION_ID OPERATOR_ID PHARMACIST_ID [overrides_json]
+#
+# One fill all the way to completed: the technician starts it, the pharmacist
+# verifies it, and completing it is what moves the prescription's totals. With
+# no overrides the service dispenses one written fill's worth, or whatever is
+# left of the authorized quantity.
+#
+# Three requests folded into one Given, because a case that is about what the
+# prescription looks like afterwards should not have to narrate the workflow
+# each time. A case that is about the workflow itself writes the three out.
+make_dispensed_fill() { given "a fill is dispensed" _make_dispensed_fill "$@"; }
+_make_dispensed_fill() {
+  local prescription="$1" operator="$2" pharmacist="$3" overrides="${4:-}"
+  [[ -n "$overrides" ]] || overrides='{}'
+  req_staff "$operator" POST "/prescriptions/${prescription}/fills/" "$overrides"
+  [[ "$STATUS" == "201" ]] || die "could not start a fill"
+  local fill; fill="$(jqv .id)"
+  req_staff "$pharmacist" POST "/fills/${fill}/verify/"
+  [[ "$STATUS" == "200" ]] || die "could not verify the fill"
+  req_staff "$pharmacist" POST "/fills/${fill}/complete/"
+  [[ "$STATUS" == "200" ]] || die "could not complete the fill"
+  NEW_ID="$fill"
+}
+
 # A pharmacy with one address and one location, for tests about what hangs off
 # a store rather than about building one. Sets FX_PHARMACY, FX_PHARMACY_ADDRESS
 # and FX_LOCATION.
@@ -217,4 +254,25 @@ _make_store() {
   make_pharmacy;                             FX_PHARMACY="$NEW_ID"
   make_address;                              FX_PHARMACY_ADDRESS="$NEW_ID"
   make_location "$FX_PHARMACY" "$FX_PHARMACY_ADDRESS"; FX_LOCATION="$NEW_ID"
+}
+
+# The pharmacy this deployment is the backend for -- Acme Pharmacy, seeded by
+# migration 0003_seed_acme_pharmacy rather than minted here, so a case that
+# wants a real dispensing site does not have to create a fresh one every run.
+# Looked up over the API rather than the database: if the seed is ever
+# missing, the case fails the same way any other missing fixture would. Sets
+# HOME_PHARMACY and HOME_LOCATION.
+HOME_PHARMACY_NCPDP_ID="4417829"
+HOME_PHARMACY=""; HOME_LOCATION=""
+use_home_pharmacy() { given "the home pharmacy is used" _use_home_pharmacy "$@"; }
+_use_home_pharmacy() {
+  req GET "/pharmacies/?name=$(urlencode "Acme Pharmacy")"
+  [[ "$STATUS" == "200" ]] || die "could not look up the home pharmacy"
+  HOME_PHARMACY="$(jqv '.results[0].id')"
+  [[ -n "$HOME_PHARMACY" && "$HOME_PHARMACY" != "null" ]] || die "the home pharmacy is not seeded"
+
+  req GET "/pharmacies/${HOME_PHARMACY}/locations/?ncpdp_id=${HOME_PHARMACY_NCPDP_ID}"
+  [[ "$STATUS" == "200" ]] || die "could not look up the home pharmacy location"
+  HOME_LOCATION="$(jqv '.results[0].id')"
+  [[ -n "$HOME_LOCATION" && "$HOME_LOCATION" != "null" ]] || die "the home pharmacy location is not seeded"
 }

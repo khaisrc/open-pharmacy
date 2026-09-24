@@ -11,9 +11,27 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+# Every `run` below goes through bash with pipefail. Naming the shell is what
+# turns it on: the default is plain `bash -e`, where a pipeline reports only
+# its last command, so a failure upstream of a `|` goes unnoticed.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   e2e:
     runs-on: ubuntu-latest
+    # Listing any scope here zeroes every other one, contents included --
+    # checkout needs contents: read to clone at all, so it has to be named
+    # even though this job never writes to the repo itself.
+    permissions:
+      contents: read
+      # Not issues: write, even though the comment goes through an
+      # /issues/{n}/comments URL. That endpoint is gated by whichever of the
+      # two the number resolves to, and a PR resolves to pull-requests --
+      # which is just as well, since this repo has Issues turned off and so
+      # can grant issues: write to nothing.
+      pull-requests: write
     steps:
       - uses: actions/checkout@v7
 
@@ -63,6 +81,18 @@ jobs:
       - name: Server logs
         if: failure()
         run: docker compose logs web
+
+      # Runs even if the suite failed (or never got the chance to), so the
+      # comment always reflects this run rather than going stale on a
+      # failure. Only on a PR: a push to main has no PR to comment on.
+      - name: Post summary comment
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 .github/scripts/junit_summary.py e2e/junit.xml e2e |
+            .github/scripts/pr_comment.sh e2e
 
       - name: Stop the stack
         if: always()

@@ -10,6 +10,7 @@ here and nowhere else; settings never see it.
 import logging
 import os
 
+import factory.random
 import pytest
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -17,19 +18,27 @@ from django.db import connection, connections
 from rest_framework.test import APIClient
 
 from config.settings.base import env
+from pharmacy.models import PharmacyLocation
 
 from .factories import (
     AddressFactory,
+    FillFactory,
     MedicationFactory,
     PatientFactory,
     PharmacyFactory,
     PharmacyLocationFactory,
     PrescriberFactory,
     PrescriptionFactory,
+    RxCounterFactory,
     StaffFactory,
 )
 
 EMBEDDED_DB_VARIABLE = "PHARMACY_TEST_DB"
+
+# The factories draw names, dates and addresses from Faker. One seed per
+# session makes every run produce the same people, so a test that happens to
+# depend on a drawn value fails the same way every time rather than sometimes.
+factory.random.reseed_random("open-pharmacy")
 
 # Filled in by the session fixture below and printed in the terminal summary,
 # so a run always says which Postgres it was against.
@@ -155,3 +164,32 @@ def technician(db, pharmacy):
     return StaffFactory(
         pharmacy=pharmacy, role="technician", registration_state="", registration_number=""
     )
+
+
+@pytest.fixture
+def fill(db):
+    return FillFactory()
+
+
+@pytest.fixture
+def home_rx_counter(db):
+    """A seeded counter for the home pharmacy (migration 0003's Acme row), so
+    a prescription created without a location can be numbered."""
+    location = PharmacyLocation.objects.get(ncpdp_id=settings.HOME_PHARMACY_LOCATION_NCPDP_ID)
+    return RxCounterFactory(pharmacy=location.pharmacy, last_issued=0)
+
+
+def with_staff(client, staff):
+    """The client, sending `staff` in X-Staff-Id on every request."""
+    client.credentials(HTTP_X_STAFF_ID=str(staff.pk))
+    return client
+
+
+@pytest.fixture
+def as_pharmacist(api, pharmacist):
+    return with_staff(api, pharmacist)
+
+
+@pytest.fixture
+def as_technician(api, technician):
+    return with_staff(api, technician)
