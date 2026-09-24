@@ -20,7 +20,7 @@ class PharmacyLocationSerializer(serializers.ModelSerializer):
     pharmacy = PharmacySummarySerializer(read_only=True)
     address = AddressSummarySerializer(read_only=True)
     address_id = serializers.PrimaryKeyRelatedField(
-        source="address", queryset=repositories.addresses.live(), write_only=True
+        source="address", queryset=repositories.addresses.all(), write_only=True
     )
     # Same reason as Medication.ndc: separators have to survive field validation
     # long enough for validate_ncpdp_id to strip them.
@@ -33,7 +33,7 @@ class PharmacyLocationSerializer(serializers.ModelSerializer):
     pharmacist_in_charge = StaffSummarySerializer(read_only=True)
     pharmacist_in_charge_id = serializers.PrimaryKeyRelatedField(
         source="pharmacist_in_charge",
-        queryset=repositories.staff.live(),
+        queryset=repositories.staff.all(),
         required=False,
         allow_null=True,
         write_only=True,

@@ -8,7 +8,7 @@ from .base import Repository
 class PharmacyRepository(Repository):
     model = Pharmacy
 
-    def live(self):
+    def all(self):
         # Annotated, not stored: the count must exclude soft-deleted locations.
         # annotate() adds a GROUP BY, which makes QuerySet.ordered False even
         # though Meta.ordering still applies -- order_by keeps DRF pagination

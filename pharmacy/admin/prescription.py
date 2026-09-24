@@ -50,7 +50,7 @@ class FillInline(admin.TabularInline):
 
     def get_queryset(self, request):
         # The inline formset scopes this to the parent itself.
-        return repositories.fills.live()
+        return repositories.fills.all()
 
 
 @admin.register(Prescription)

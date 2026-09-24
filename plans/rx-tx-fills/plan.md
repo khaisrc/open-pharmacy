@@ -70,7 +70,7 @@ instance per module, returns `QuerySet`s (DRF's filtering, pagination and
 ```text
 class Repository:
     model = None
-    def live(self): ...                 # objects + the joins every read needs
+    def all(self): ...                  # objects + the joins every read needs
     def find(self, **lookup): ...       # duplicate checks, header lookups
     def get(self, pk): ...
     def get_locked(self, pk): ...       # select_for_update(of=("self",))
@@ -99,7 +99,7 @@ and is only reached through a prescription id.
 
 **Views** are adapters: parse → service → serialize. `SoftDeleteModelViewSet`
 declares `repository` and `service`; `get_queryset()` is
-`self.repository.live()`; `perform_create` is
+`self.repository.all()`; `perform_create` is
 `serializer.instance = self.service.create(self.ctx, **serializer.validated_data)`.
 `serializer.save()` is never called. `PharmacyScopedViewSet` resolves its
 parent through `repositories.pharmacy`; a `PrescriptionScopedViewSet` of the
@@ -388,7 +388,7 @@ the resource, header and filter rows.
   builds its used fill with `FillFactory(status=completed)`;
   `test_put_of_the_current_body…` drops `fills_used=3`.
   `test_fill_and_cancel_cost_the_same_queries` is replaced by a direct
-  assertion that `repositories.prescription.get_locked()` and `live()` carry
+  assertion that `repositories.prescription.get_locked()` and `all()` carry
   the same joins. Create payloads gain `intake_source` if Q3
   makes it required.
 - `TestStaffHeader`: missing header on fill create is 400 `staff_required`;

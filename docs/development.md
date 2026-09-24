@@ -83,7 +83,7 @@ lets a soft-deleted record's identifier be reused.
 ## Layers
 
 A request goes view → service → repository → model. Views read through
-`repository.live()` and call a service for anything that changes state; the
+`repository.all()` and call a service for anything that changes state; the
 service owns the transaction, the row lock and every refusal; the repository
 is the only place a query is written. `pharmacy/tests/test_layering.py`
 enforces it. The reasoning, and where the rule stops, is in `AGENTS.md`.

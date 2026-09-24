@@ -6,7 +6,7 @@ from .base import Repository
 class FieldChangeRepository(Repository):
     model = FieldChange
 
-    def live(self):
+    def all(self):
         # Append-only and never soft-deleted: every row is live.
         return FieldChange.objects.all()
 

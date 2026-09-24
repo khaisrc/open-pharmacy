@@ -14,7 +14,7 @@ STAFF_HEADER = "X-Staff-Id"
 class ServiceViewSetMixin:
     """An adapter: parse the request, call the service, serialize the result.
 
-    Reads come from `repository.live()`, the live-only queryset with the joins
+    Reads come from `repository.all()`, the live-only queryset with the joins
     every read needs; writes go through `service`, which owns the rules, the
     transaction and the delete guard. `serializer.save()` is never called --
     a serializer here validates and renders, and the service is the only
@@ -53,7 +53,7 @@ class ServiceViewSetMixin:
         return staff
 
     def get_queryset(self):
-        return self.repository.live()
+        return self.repository.all()
 
     def perform_create(self, serializer):
         serializer.instance = self.service.create(self.ctx, **serializer.validated_data)
@@ -106,7 +106,7 @@ class ScopedViewSetMixin:
     def parent(self):
         # DRF's get_object_or_404 also turns a malformed UUID into a 404.
         return get_object_or_404(
-            self.parent_repository.live(), pk=self.kwargs[self.parent_url_kwarg]
+            self.parent_repository.all(), pk=self.kwargs[self.parent_url_kwarg]
         )
 
     @property

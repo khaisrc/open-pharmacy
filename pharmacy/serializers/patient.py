@@ -12,7 +12,7 @@ class PatientSerializer(serializers.ModelSerializer):
     address = AddressSummarySerializer(read_only=True)
     address_id = serializers.PrimaryKeyRelatedField(
         source="address",
-        queryset=repositories.addresses.live(),
+        queryset=repositories.addresses.all(),
         required=False,
         allow_null=True,
         write_only=True,

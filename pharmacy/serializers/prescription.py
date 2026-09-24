@@ -33,20 +33,20 @@ class PrescriptionSerializer(serializers.ModelSerializer):
 
     patient = PatientSummarySerializer(read_only=True)
     patient_id = serializers.PrimaryKeyRelatedField(
-        source="patient", queryset=repositories.patients.live(), write_only=True
+        source="patient", queryset=repositories.patients.all(), write_only=True
     )
     prescriber = PrescriberSummarySerializer(read_only=True)
     prescriber_id = serializers.PrimaryKeyRelatedField(
-        source="prescriber", queryset=repositories.prescribers.live(), write_only=True
+        source="prescriber", queryset=repositories.prescribers.all(), write_only=True
     )
     medication = MedicationSummarySerializer(read_only=True)
     medication_id = serializers.PrimaryKeyRelatedField(
-        source="medication", queryset=repositories.medications.live(), write_only=True
+        source="medication", queryset=repositories.medications.all(), write_only=True
     )
     pharmacy_location = PharmacyLocationSummarySerializer(read_only=True)
     pharmacy_location_id = serializers.PrimaryKeyRelatedField(
         source="pharmacy_location",
-        queryset=repositories.pharmacy_locations.live(),
+        queryset=repositories.pharmacy_locations.all(),
         # Optional on the wire, not in the database: validate() substitutes the
         # home pharmacy location when a client leaves it out.
         required=False,

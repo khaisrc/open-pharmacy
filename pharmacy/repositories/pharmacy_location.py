@@ -8,7 +8,7 @@ from .base import Repository
 class PharmacyLocationRepository(Repository):
     model = PharmacyLocation
 
-    def live(self):
+    def all(self):
         return PharmacyLocation.objects.select_related(
             "pharmacy", "address", "pharmacist_in_charge"
         )

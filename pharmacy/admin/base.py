@@ -43,7 +43,7 @@ class ServiceModelAdmin(admin.ModelAdmin):
         )
 
     def get_queryset(self, request):
-        queryset = self.repository.live()
+        queryset = self.repository.all()
         ordering = self.get_ordering(request)
         return queryset.order_by(*ordering) if ordering else queryset
 

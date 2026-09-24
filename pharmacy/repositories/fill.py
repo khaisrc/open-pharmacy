@@ -8,7 +8,7 @@ from .base import Repository
 class FillRepository(Repository):
     model = Fill
 
-    def live(self):
+    def all(self):
         return Fill.objects.select_related(
             "prescription",
             "pharmacy_location",

@@ -6,5 +6,5 @@ from .base import Repository
 class StaffRepository(Repository):
     model = Staff
 
-    def live(self):
+    def all(self):
         return Staff.objects.select_related("pharmacy")

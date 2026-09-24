@@ -2,7 +2,7 @@
 
 The instances are plural (`prescriptions`) and the modules singular
 (`prescription.py`) so that importing an instance never shadows its module.
-Call sites read `repositories.prescriptions.live()`.
+Call sites read `repositories.prescriptions.all()`.
 """
 
 from .address import AddressRepository

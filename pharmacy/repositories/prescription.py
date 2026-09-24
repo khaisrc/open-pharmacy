@@ -6,7 +6,7 @@ from .base import Repository
 class PrescriptionRepository(Repository):
     model = Prescription
 
-    def live(self):
+    def all(self):
         # Without select_related, nested read serializers turn one list request
         # into 3N queries. The fills are prefetched because every quantity the
         # representation carries is derived from them: one query per page
@@ -26,4 +26,4 @@ class PrescriptionRepository(Repository):
         # Without the prefetch: a locked row is about to be written, and a
         # fill list read before the write would answer the totals with stale
         # numbers. The model re-reads the fills when it needs them.
-        return self.live().prefetch_related(None).select_for_update(of=("self",)).get(pk=pk)
+        return self.all().prefetch_related(None).select_for_update(of=("self",)).get(pk=pk)
