@@ -6,7 +6,7 @@ from django.db import models
 from django.utils import timezone
 
 from .base import TimeStampedModel
-from .fill import IN_FLIGHT_STATUSES, FillStatus
+from .fill import FILL_IN_FLIGHT_STATUSES, FillStatus
 
 # The largest Rx number a label carries: 12 digits.
 RX_NUMBER_MAX = 999_999_999_999
@@ -129,7 +129,7 @@ class Prescription(TimeStampedModel):
         for fill in self.fills.all():
             if fill.status == FillStatus.COMPLETED:
                 dispensed += fill.quantity_dispensed
-            elif fill.status in IN_FLIGHT_STATUSES:
+            elif fill.status in FILL_IN_FLIGHT_STATUSES:
                 in_progress += fill.quantity_dispensed
         return dispensed, in_progress
 

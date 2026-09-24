@@ -22,8 +22,8 @@ class FillStatus(models.TextChoices):
 
 # A fill in flight holds its quantity against the prescription and blocks a
 # second one from starting; only a terminal fill releases it.
-IN_FLIGHT_STATUSES = frozenset({FillStatus.PENDING, FillStatus.VERIFIED})
-TERMINAL_FILL_STATUSES = frozenset({FillStatus.COMPLETED, FillStatus.CANCELLED})
+FILL_IN_FLIGHT_STATUSES = frozenset({FillStatus.PENDING, FillStatus.VERIFIED})
+FILL_TERMINAL_STATUSES = frozenset({FillStatus.COMPLETED, FillStatus.CANCELLED})
 
 # The complete set of transitions, keyed by the action that performs each.
 # `verified -> pending` is how a verified fill is sent back for rework; it is
@@ -32,7 +32,7 @@ FILL_TRANSITIONS = {
     "verify": (FillStatus.PENDING, FillStatus.VERIFIED),
     "unverify": (FillStatus.VERIFIED, FillStatus.PENDING),
     "complete": (FillStatus.VERIFIED, FillStatus.COMPLETED),
-    "cancel": (IN_FLIGHT_STATUSES, FillStatus.CANCELLED),
+    "cancel": (FILL_IN_FLIGHT_STATUSES, FillStatus.CANCELLED),
 }
 
 
@@ -79,7 +79,7 @@ class Fill(TimeStampedModel):
             # with a clearer message, this is the backstop for the race.
             models.UniqueConstraint(
                 fields=["prescription"],
-                condition=Q(status__in=sorted(IN_FLIGHT_STATUSES)) & Q(deleted__isnull=True),
+                condition=Q(status__in=sorted(FILL_IN_FLIGHT_STATUSES)) & Q(deleted__isnull=True),
                 name="uniq_live_fill_in_flight",
             ),
             models.CheckConstraint(
@@ -111,11 +111,11 @@ class Fill(TimeStampedModel):
 
     @property
     def is_in_flight(self):
-        return self.status in IN_FLIGHT_STATUSES
+        return self.status in FILL_IN_FLIGHT_STATUSES
 
     @property
     def is_terminal(self):
-        return self.status in TERMINAL_FILL_STATUSES
+        return self.status in FILL_TERMINAL_STATUSES
 
     @property
     def is_partial(self):

@@ -9,9 +9,9 @@ from .address import Address
 from .base import TimeStampedModel
 from .field_change import FieldChange
 from .fill import (
+    FILL_IN_FLIGHT_STATUSES,
+    FILL_TERMINAL_STATUSES,
     FILL_TRANSITIONS,
-    IN_FLIGHT_STATUSES,
-    TERMINAL_FILL_STATUSES,
     Fill,
     FillStatus,
 )
@@ -39,12 +39,12 @@ from .staff import (
 
 __all__ = [
     "ALLOWED_TRANSITIONS",
+    "FILL_IN_FLIGHT_STATUSES",
+    "FILL_TERMINAL_STATUSES",
     "FILL_TRANSITIONS",
-    "IN_FLIGHT_STATUSES",
-    "RX_NUMBER_MAX",
     "ROLES_REQUIRING_CERTIFICATION",
     "ROLES_REQUIRING_REGISTRATION",
-    "TERMINAL_FILL_STATUSES",
+    "RX_NUMBER_MAX",
     "TERMINAL_STATUSES",
     "Address",
     "CertificationBody",

@@ -1,6 +1,6 @@
 from django.db.models import Max
 
-from pharmacy.models import IN_FLIGHT_STATUSES, Fill
+from pharmacy.models import FILL_IN_FLIGHT_STATUSES, Fill
 
 from .base import Repository
 
@@ -20,7 +20,7 @@ class FillRepository(Repository):
 
     def in_flight(self, prescription):
         """The prescription's pending or verified fill, or None."""
-        return self.find(prescription=prescription, status__in=IN_FLIGHT_STATUSES).first()
+        return self.find(prescription=prescription, status__in=FILL_IN_FLIGHT_STATUSES).first()
 
     def next_sequence(self, prescription):
         # all_objects: a soft-deleted fill keeps its number, and the unique
