@@ -8,12 +8,11 @@ from rest_framework.test import APIClient
 
 from pharmacy.models import Fill, FillStatus, PrescriptionStatus, RxCounter
 
-from .conftest import with_staff
+from .conftest import as_staff
 from .factories import (
     FillFactory,
     PharmacyLocationFactory,
     PrescriptionFactory,
-    StaffFactory,
 )
 from .helpers import FILLS, PRESCRIPTIONS, dispense, fills_url, prescription_body, start_fill
 
@@ -25,55 +24,35 @@ def transition(client, prescription, fill, action):
     return client.post(fills_url(prescription, fill, action))
 
 
-class TestStaffHeader:
-    """X-Staff-Id names the person acting. Optional on most writes, ignored
-    on reads, required where a fill needs a person."""
+class TestWhoActs:
+    """A fill names the person who started and verified it, so those two
+    writes take a bearer token that maps to a staff member; a login (Basic
+    or session) can do everything else."""
 
-    def test_create_without_a_header_is_400(self, api, prescription):
+    def test_create_as_a_login_is_403(self, api, prescription):
         response = start_fill(api, prescription)
-        assert response.status_code == 400
-        assert response.data["error"]["code"] == "staff_required"
+        assert response.status_code == 403
+        assert response.data["error"]["code"] == "staff_identity_required"
         assert not Fill.objects.exists()
 
-    @pytest.mark.parametrize(
-        "value",
-        ["not-a-uuid", MISSING, "deleted", "inactive"],
-        ids=["malformed", "unknown", "deleted", "inactive"],
-    )
-    def test_a_header_that_names_nobody_is_400(self, api, prescription, value):
-        if value == "deleted":
-            staff = StaffFactory()
-            staff.delete()
-            value = str(staff.pk)
-        elif value == "inactive":
-            value = str(StaffFactory(is_active=False).pk)
-        api.credentials(HTTP_X_STAFF_ID=value)
-        response = start_fill(api, prescription)
-        assert response.status_code == 400
-        assert response.data["error"]["code"] == "invalid_staff"
-        assert response.data["error"]["details"]["value"] == value
+    def test_verify_as_a_login_is_403(self, api, fill):
+        response = transition(api, fill.prescription, fill, "verify")
+        assert response.status_code == 403
+        assert response.data["error"]["code"] == "staff_identity_required"
 
-    def test_a_bad_header_is_ignored_on_a_read(self, api, fill):
-        api.credentials(HTTP_X_STAFF_ID="not-a-uuid")
-        assert api.get(fills_url(fill.prescription)).status_code == 200
-        assert api.get(fills_url(fill.prescription, fill)).status_code == 200
-
-    def test_verify_needs_a_pharmacist(self, as_technician, fill):
+    def test_verify_needs_the_scope(self, as_technician, fill):
         response = transition(as_technician, fill.prescription, fill, "verify")
-        assert response.status_code == 400
-        assert response.data["error"]["code"] == "pharmacist_required"
+        assert response.status_code == 403
+        assert response.data["error"]["code"] == "insufficient_scope"
+        assert response.data["error"]["details"]["required"] == ["fills:verify"]
         fill.refresh_from_db()
         assert fill.status == FillStatus.PENDING
 
-    def test_verify_without_a_header_is_400(self, api, fill):
-        response = transition(api, fill.prescription, fill, "verify")
-        assert response.status_code == 400
-        assert response.data["error"]["code"] == "staff_required"
-
-    def test_operator_is_whoever_the_header_names(self, as_technician, technician, prescription):
+    def test_operator_is_whoever_the_token_is_for(self, as_technician, technician, prescription):
         response = start_fill(as_technician, prescription)
         assert response.status_code == 201
         assert response.data["operator"]["id"] == str(technician.pk)
+        assert response.data["operator"]["email"] == technician.email
 
 
 class TestCreate:
@@ -374,9 +353,7 @@ class TestConcurrency:
         rx = PrescriptionFactory(fills_authorized=1)
 
         def start():
-            client = with_staff(APIClient(), pharmacist)
-            client.force_authenticate(user=user)
-            return start_fill(client, rx)
+            return start_fill(as_staff(APIClient(), pharmacist), rx)
 
         responses = self.race([start, start])
         assert sorted(r.status_code for r in responses) == [201, 409]

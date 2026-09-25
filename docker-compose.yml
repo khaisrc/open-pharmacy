@@ -11,6 +11,8 @@ services:
       - "${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql
+      # Creates the second database the identity server keeps its tables in.
+      - ./scripts/create-auth-db.sh:/docker-entrypoint-initdb.d/create-auth-db.sh:ro
     healthcheck:
       # $$ defers expansion to the container's shell, where env_file applies.
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
@@ -33,12 +35,37 @@ services:
       - .:/app
     command: ["sh", "-c", "python manage.py migrate --noinput && python manage.py seed_local"]
 
+  # The identity server (Logto). Seeds its own database on first start and
+  # serves the console on 3002; the API verifies tokens against 3001.
+  # Configure it as docs/deployment.md describes (resource, scopes, roles,
+  # customizer).
+  auth:
+    image: svhd/logto:1.43
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["sh", "-c", "npm run cli db seed -- --swe && npm start"]
+    # The public URLs: what a browser reaches, and what Logto writes into a
+    # token's issuer. The API fetches keys over the Compose network instead
+    # (LOGTO_INTERNAL_ENDPOINT in .env.local), so the host ports are free to
+    # be whatever is not taken.
+    environment:
+      TRUST_PROXY_HEADER: 1
+      DB_URL: postgres://pharmacy:pharmacy@db:5432/auth
+      ENDPOINT: http://localhost:${AUTH_PORT:-8441}
+      ADMIN_ENDPOINT: http://localhost:${AUTH_CONSOLE_PORT:-8442}
+    ports:
+      - "${AUTH_PORT:-8441}:3001"
+      - "${AUTH_CONSOLE_PORT:-8442}:3002"
+
   web:
     build: .
     env_file: .env.local
     depends_on:
       migrate:
         condition: service_completed_successfully
+      auth:
+        condition: service_started
     ports:
       # Interpolated by Compose from the shell, not from .env.local:
       #   WEB_PORT=9000 docker compose up

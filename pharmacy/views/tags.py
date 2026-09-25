@@ -23,31 +23,20 @@ PRESCRIPTION_ID = OpenApiParameter(
     OpenApiParameter.PATH,
     description="The prescription being filled.",
 )
-# The staff member performing a write. Optional everywhere, recorded in the
-# change history when present, required where a fill needs a person.
-X_STAFF_ID = OpenApiParameter(
-    "X-Staff-Id",
-    OpenApiTypes.UUID,
-    OpenApiParameter.HEADER,
-    required=False,
-    description=(
-        "The staff member performing this write. Must name a live, active staff "
-        "member; required to create or verify a fill."
-    ),
-)
 
 
-def tagged(tag, *extra_actions, parameters=(), read_actions=READ_ACTIONS, actions=ACTIONS):
+def tagged(tag, *extra_actions, parameters=(), actions=ACTIONS, scopes=None):
     """extend_schema_view kwargs putting every action of a viewset under `tag`.
 
-    Every action that is not a read is a write and carries the X-Staff-Id
-    header; `extra_actions` are writes unless named in `read_actions`. A
-    viewset without the full CRUD set names the `actions` it has.
+    A viewset without the full CRUD set names the `actions` it has. With
+    `scopes` (the viewset's `required_scopes`), each operation's description
+    states the scopes that grant it, so the docs say what a 403 will.
     """
     kwargs = {}
     for action in [*actions, *extra_actions]:
-        params = list(parameters)
-        if action not in read_actions:
-            params.append(X_STAFF_ID)
-        kwargs[action] = extend_schema(tags=[tag], parameters=params)
+        extra = {}
+        required = (scopes or {}).get(action)
+        if required:
+            extra["description"] = "Requires scope: " + " or ".join(sorted(required)) + "."
+        kwargs[action] = extend_schema(tags=[tag], parameters=list(parameters), **extra)
     return kwargs

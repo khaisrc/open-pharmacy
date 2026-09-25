@@ -49,7 +49,7 @@ prescription, and once it exists it has an id of its own:
 | `POST` | `/prescriptions/{id}/fills/` | start one: `{"quantity_dispensed"?, "days_supply"?}` → 201, `pending` |
 | `GET` | `/fills/{fill_id}/` | |
 | `PATCH` | `/fills/{fill_id}/` | edit `quantity_dispensed` or `days_supply` while `pending` (else 409 `not_pending`) |
-| `POST` | `/fills/{fill_id}/verify/` | `pending → verified`; the pharmacist in `X-Staff-Id` becomes `verified_by` |
+| `POST` | `/fills/{fill_id}/verify/` | `pending → verified`; the token's staff member becomes `verified_by` (`fills:verify`) |
 | `POST` | `/fills/{fill_id}/unverify/` | `verified → pending`, clearing `verified_by` |
 | `POST` | `/fills/{fill_id}/complete/` | `verified → completed`; stamps `dispensed_at` |
 | `POST` | `/fills/{fill_id}/cancel/` | `pending` or `verified → cancelled` |
@@ -86,15 +86,15 @@ snapshot — re-routing the prescription later does not rewrite it), the
 `dispensed_at`. That is the per-dispensing record a transfer under 21 CFR
 1306.25 reproduces.
 
-## Who is acting: `X-Staff-Id`
+## Who is acting
 
-Writes may carry an `X-Staff-Id` header naming the staff member performing
-them (see [staff.md](staff.md)). It is optional on most writes and ignored
-on reads; when present it must name a live, active staff member (400
-`invalid_staff`). Starting a fill requires it — the person becomes the
-`operator` (400 `staff_required`) — and `verify/` requires it to name a
-pharmacist (400 `pharmacist_required`). Whoever it names is recorded on
-every change-history row the request produces.
+A fill names the person who started it (`operator`) and the pharmacist who
+verified it (`verified_by`): the staff record the bearer token maps to (see
+[staff.md](staff.md)). Those two writes therefore need a token; a Basic or
+session login can do everything else and is refused there with 403
+`staff_identity_required`. Which actions a token may perform is its scopes
+([api.md](api.md#scopes)); whoever it names is recorded on every
+change-history row the request produces.
 
 ## Rx number and origin
 

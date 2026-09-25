@@ -1,14 +1,19 @@
-import uuid
-
 from django.utils.functional import cached_property
 from rest_framework import viewsets
 from rest_framework.generics import get_object_or_404
 
 from pharmacy import repositories
-from pharmacy.exceptions import InvalidRequest
+from pharmacy.auth import Principal
 from pharmacy.services import WriteContext
 
-STAFF_HEADER = "X-Staff-Id"
+
+def principal_of(request):
+    """The request's principal: the one the bearer token produced, or one
+    made from the Django user a session or Basic credential authenticated."""
+    user = request.user
+    if isinstance(user, Principal):
+        return user
+    return Principal.from_django_user(user)
 
 
 class ServiceViewSetMixin:
@@ -18,39 +23,18 @@ class ServiceViewSetMixin:
     every read needs; writes go through `service`, which owns the rules, the
     transaction and the delete guard. `serializer.save()` is never called --
     a serializer here validates and renders, and the service is the only
-    thing that persists.
+    thing that persists. `required_scopes` names, per action, the scopes a
+    token must hold; `HasScope` reads it and fails closed on an action that
+    has none.
     """
 
     repository = None
     service = None
+    required_scopes = {}
 
     @cached_property
     def ctx(self):
-        return WriteContext.from_request(self.request, staff=self._staff_from_header())
-
-    def _staff_from_header(self):
-        """The staff member the X-Staff-Id header names, or None.
-
-        Resolved only when a write asks for the context, so a read never
-        looks at the header. When present it must be a live, active staff
-        member: a wrong header is a 400 before any service runs, rather than
-        a fill silently attributed to nobody.
-        """
-        value = self.request.headers.get(STAFF_HEADER)
-        if not value:
-            return None
-        try:
-            pk = uuid.UUID(value)
-        except ValueError:
-            pk = None
-        staff = repositories.staff.find(pk=pk, is_active=True).first() if pk else None
-        if staff is None:
-            raise InvalidRequest(
-                f"{STAFF_HEADER} does not name a live, active staff member.",
-                code="invalid_staff",
-                details={"header": STAFF_HEADER, "value": value},
-            )
-        return staff
+        return WriteContext.from_request(self.request, principal_of(self.request))
 
     def get_queryset(self):
         return self.repository.all()

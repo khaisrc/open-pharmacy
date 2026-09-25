@@ -50,7 +50,9 @@ def record(ctx, instance, before=None):
             field=field,
             old_value=old,
             new_value=new,
-            changed_by_user=ctx.user,
+            # Exactly one: a token names a staff member, a Django credential
+            # names a login. The CHECK constraint holds it.
+            changed_by_user=None if ctx.staff is not None else ctx.user,
             changed_by_staff=ctx.staff,
             request_path=ctx.path,
             request_method=ctx.method,

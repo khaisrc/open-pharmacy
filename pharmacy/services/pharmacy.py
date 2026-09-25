@@ -2,6 +2,8 @@ from django.db import transaction
 from rest_framework.exceptions import ValidationError
 
 from pharmacy import repositories
+from pharmacy.auth.scopes import Scope
+from pharmacy.exceptions import InsufficientScope
 
 from . import history
 from .base import CrudService
@@ -16,6 +18,7 @@ class PharmacyService(CrudService):
     protected_relations = (("locations", "pharmacy locations"), ("staff", "staff"))
 
     def create(self, ctx, rx_number_seed=None, step=None, **fields):
+        self._require_onboard_scope(ctx, rx_number_seed, step)
         with transaction.atomic():
             pharmacy = super().create(ctx, **fields)
             if rx_number_seed is not None or step is not None:
@@ -23,11 +26,23 @@ class PharmacyService(CrudService):
         return pharmacy
 
     def update(self, ctx, instance, rx_number_seed=None, step=None, **fields):
+        self._require_onboard_scope(ctx, rx_number_seed, step)
         with transaction.atomic():
             instance = super().update(ctx, instance, **fields)
             if rx_number_seed is not None or step is not None:
                 self._seed_counter(ctx, instance, rx_number_seed, step)
         return self.repository.get(instance.pk)
+
+    @staticmethod
+    def _require_onboard_scope(ctx, seed, step):
+        # Issuing Rx numbers is a separate grant from editing the pharmacy.
+        if (seed is not None or step is not None) and not ctx.principal.has(
+            Scope.PHARMACIES_ONBOARD
+        ):
+            raise InsufficientScope(
+                "Seeding or moving the Rx counter takes pharmacies:onboard.",
+                details={"required": [str(Scope.PHARMACIES_ONBOARD)]},
+            )
 
     def _seed_counter(self, ctx, pharmacy, seed, step):
         """Create the counter, or move it. Under the same lock issuing

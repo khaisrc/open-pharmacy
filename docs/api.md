@@ -5,10 +5,56 @@ Swagger UI at `/api/v1/docs/`, ReDoc at `/api/v1/redoc/`.
 
 ## Authentication
 
-HTTP Basic against Django's user table. Every endpoint requires it except
-`/api/v1/health/` and the docs. There is **no authorization yet**: any
-authenticated user can read and write any record, including patient PHI. The
-JWT and role design that replaces this is in [`plans/auth/plan.md`](../plans/auth/plan.md).
+Every endpoint except `/api/v1/health/` and the docs takes
+`Authorization: Bearer <access token>` issued by the Logto identity server
+(`LOGTO_ENDPOINT`) for this API's resource (`LOGTO_API_RESOURCE`). The token
+is verified against Logto's published keys -- signature, issuer, audience,
+expiry -- and read into the principal: who (`sub`, the Logto user id),
+their email, name, roles, pharmacy and board registration (custom claims
+Logto's JWT customizer adds; see [deployment.md](deployment.md)), and the
+scopes their roles grant. No database lookup and no call to Logto per
+request; the token is the identity.
+
+The first request from a user creates their [staff record](staff.md) from
+the token; every later token must describe the same person.
+
+HTTP Basic against Django's user table, and the session the admin uses,
+still work during the transition. A login holds every scope, is recorded in
+the change history as a login rather than a person, and cannot start or
+verify a fill -- those name a staff member (403 `staff_identity_required`).
+
+Locally, `python manage.py mint_token` signs a token the API accepts without
+a running Logto; see [development.md](development.md).
+
+### Scopes
+
+An action needs one of the scopes listed for it; a token without it is a 403
+`insufficient_scope` naming what was required. `read` covers list, detail and
+the nested child lists (a nested list needs the child's read scope); `write`
+covers create, update, delete and the resource's actions.
+
+| Resource | Scopes |
+|---|---|
+| prescriptions | `prescriptions:read`, `prescriptions:create`, `prescriptions:update` (PATCH, PUT, delete, `cancel/`), `prescriptions:update_unfilled` (the same, only while no fill has been started) |
+| fills | `fills:read`, `fills:write` (create, PATCH, `unverify/`, `complete/`, `cancel/`), `fills:verify` |
+| patients | `patients:read`, `patients:write` |
+| prescribers | `prescribers:read`, `prescribers:write` |
+| medications | `medications:read`, `medications:write` |
+| pharmacies | `pharmacies:read`, `pharmacies:write`, `pharmacies:onboard` (`rx_number_seed`, `step`) |
+| locations | `locations:read`, `locations:write` |
+| addresses | `addresses:read`, `addresses:write` |
+| staff | `staff:read`, `staff:write` |
+
+Logto roles grant them: `admin` and `pharmacist` hold all twenty-two;
+`certified_technician`, `technician` and `intern` hold every `:read` plus
+`prescriptions:create`, `prescriptions:update_unfilled`, `fills:write`,
+`patients:write` and `addresses:write`. A technician may therefore enter a
+prescription and change it until a fill is started (a cancelled fill does
+not count), after which the change is a 403 with
+`details.reason = "a fill has been started"`; verifying a fill and onboarding
+a pharmacy are a pharmacist's and an admin's. An intern's token must also
+name a supervising pharmacist or technician (`supervising_sub`), or it is
+refused (401 `supervisor_required`).
 
 ## Resources
 
@@ -30,10 +76,9 @@ All resources support `GET` (list and detail), `POST`, `PATCH`, `PUT` and
 (`patient_id`, `address_id`); reads return the nested object, so rendering a
 prescription is one request.
 
-Any write may carry an `X-Staff-Id` header naming the staff member performing
-it; a fill needs one. See [prescriptions.md](prescriptions.md). Every write
-is recorded column by column in a change-history table (old value, new value,
-login, staff member, request path and id), which has no API yet.
+Every write is recorded column by column in a change-history table (old
+value, new value, the staff member the token named or the login, request
+path and id), which has no API yet.
 
 ## Sub-resources
 
@@ -79,7 +124,7 @@ history (attributed to the login, with no staff member), a prescription
 added there gets its Rx number from the pharmacy's counter, and a write the
 service refuses comes back as a message on the page rather than a change.
 What the admin cannot do is what has no login-shaped actor: a fill is
-started and moved through its statuses only through the API, with
-`X-Staff-Id`; the admin shows fills, and edits a pending one's quantity and
+started and verified only through the API, by a bearer token that names a
+staff member; the admin shows fills, and edits a pending one's quantity and
 days' supply exactly as `PATCH` would. The change history is read-only
 there, and `RxCounter` is where a pharmacy is onboarded.

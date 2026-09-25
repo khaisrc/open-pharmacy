@@ -18,6 +18,7 @@ from django.db import connection, connections
 from rest_framework.test import APIClient
 
 from config.settings.base import env
+from pharmacy.auth import authentication
 from pharmacy.models import PharmacyLocation
 
 from .factories import (
@@ -30,8 +31,8 @@ from .factories import (
     PrescriberFactory,
     PrescriptionFactory,
     RxCounterFactory,
-    StaffFactory,
 )
+from .tokens import Identity, TokenIssuer
 
 EMBEDDED_DB_VARIABLE = "PHARMACY_TEST_DB"
 
@@ -154,16 +155,48 @@ def prescription(db):
     return PrescriptionFactory()
 
 
-@pytest.fixture
-def pharmacist(db, pharmacy):
-    return StaffFactory(pharmacy=pharmacy)
+@pytest.fixture(scope="session")
+def issuer():
+    """One signing key for the session; the verifier trusts it and nothing
+    else, so no test needs a running Logto."""
+    issuer = TokenIssuer()
+    authentication.set_verifier(issuer.verifier())
+    yield issuer
+    authentication.set_verifier(None)
+
+
+@pytest.fixture(autouse=True)
+def _tokens(issuer):
+    """Every test verifies against the session key."""
 
 
 @pytest.fixture
-def technician(db, pharmacy):
-    return StaffFactory(
-        pharmacy=pharmacy, role="technician", registration_state="", registration_number=""
-    )
+def identity(issuer, pharmacy):
+    """A factory for Logto identities: identity(roles=..., pharmacy=...)."""
+
+    def make(**kwargs):
+        kwargs.setdefault("pharmacy", pharmacy)
+        return Identity(issuer, **kwargs)
+
+    return make
+
+
+@pytest.fixture
+def pharmacist(db, identity):
+    """A pharmacist's Staff row, registered from a token the way a first
+    request would; `.identity` mints tokens for it."""
+    ident = identity(roles=("pharmacist",))
+    staff = ident.register()
+    staff.identity = ident
+    return staff
+
+
+@pytest.fixture
+def technician(db, identity):
+    ident = identity(roles=("technician",))
+    staff = ident.register()
+    staff.identity = ident
+    return staff
 
 
 @pytest.fixture
@@ -179,17 +212,17 @@ def home_rx_counter(db):
     return RxCounterFactory(pharmacy=location.pharmacy, last_issued=0)
 
 
-def with_staff(client, staff):
-    """The client, sending `staff` in X-Staff-Id on every request."""
-    client.credentials(HTTP_X_STAFF_ID=str(staff.pk))
-    return client
+def as_staff(client, staff, scopes=None):
+    """The client, sending a bearer token for `staff` (a fixture row with
+    `.identity`) on every request."""
+    return staff.identity.bearer(client, scopes)
 
 
 @pytest.fixture
-def as_pharmacist(api, pharmacist):
-    return with_staff(api, pharmacist)
+def as_pharmacist(pharmacist):
+    return as_staff(APIClient(), pharmacist)
 
 
 @pytest.fixture
-def as_technician(api, technician):
-    return with_staff(api, technician)
+def as_technician(technician):
+    return as_staff(APIClient(), technician)

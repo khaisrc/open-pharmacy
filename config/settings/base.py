@@ -98,11 +98,17 @@ STORAGES = {
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
+    # A Logto bearer token first; Basic and session stay for the transition
+    # (and for the admin), with every scope.
     "DEFAULT_AUTHENTICATION_CLASSES": [
+        "pharmacy.auth.LogtoJWTAuthentication",
         "rest_framework.authentication.BasicAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
-    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+        "pharmacy.auth.HasScope",
+    ],
     "DEFAULT_PAGINATION_CLASS": "pharmacy.pagination.DefaultPagination",
     "PAGE_SIZE": 25,
     "DEFAULT_FILTER_BACKENDS": [
@@ -173,6 +179,21 @@ SPECTACULAR_SETTINGS = {
 # API fills it in when a client does not name one. It is a setting rather than a
 # constant because the same code serves a different store in each environment.
 HOME_PHARMACY_LOCATION_NCPDP_ID = env.str("HOME_PHARMACY_LOCATION_NCPDP_ID", default="4417829")
+
+# The identity server. Access tokens must carry issuer {LOGTO_ENDPOINT}/oidc
+# -- the public URL, which is what Logto writes into them -- and audience
+# LOGTO_API_RESOURCE, the API resource indicator configured in Logto. The
+# keys are fetched from LOGTO_INTERNAL_ENDPOINT when that is set: the
+# address this service reaches Logto at when it is not the public one (the
+# Compose network, a private subnet behind a proxy). uat and prod require
+# the first and the last; local points at the Compose service.
+LOGTO_ENDPOINT = env.str("LOGTO_ENDPOINT", default="http://localhost:8441")
+LOGTO_INTERNAL_ENDPOINT = env.str("LOGTO_INTERNAL_ENDPOINT", default="")
+LOGTO_API_RESOURCE = env.str("LOGTO_API_RESOURCE", default="https://api.open-pharmacy.local")
+# Local only: a PEM private key the `mint_token` command signs dev tokens
+# with, and the verifier accepts alongside Logto's keys. Never set outside
+# local; `local.py` is the only settings module that reads it.
+LOGTO_DEV_SIGNING_KEY = ""
 
 
 LOGGING = {

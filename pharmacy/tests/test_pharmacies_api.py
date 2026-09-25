@@ -231,8 +231,9 @@ class TestPharmacistInCharge:
             "id": str(pharmacist.pk),
             "first_name": pharmacist.first_name,
             "last_name": pharmacist.last_name,
+            "email": pharmacist.email,
             "role": "pharmacist",
-            "registration_state": "OR",
+            "registration_state": pharmacist.registration_state,
             "registration_number": pharmacist.registration_number,
         }
 

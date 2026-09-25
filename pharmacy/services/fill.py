@@ -13,8 +13,8 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from pharmacy import repositories
-from pharmacy.exceptions import Conflict, InvalidRequest
-from pharmacy.models import FILL_TRANSITIONS, FillStatus, PrescriptionStatus, StaffRole
+from pharmacy.exceptions import Conflict, InsufficientScope
+from pharmacy.models import FILL_TRANSITIONS, FillStatus, PrescriptionStatus
 
 from . import history
 from .base import CrudService
@@ -74,14 +74,9 @@ class FillService(CrudService):
             return super().update(ctx, fill, **fields)
 
     def verify(self, ctx, fill):
-        staff = self._require_staff(ctx)
-        if staff.role != StaffRole.PHARMACIST:
-            raise InvalidRequest(
-                "Only a pharmacist can verify a fill.",
-                code="pharmacist_required",
-                details={"staff_id": str(staff.pk), "role": staff.role},
-            )
-        return self._transition(ctx, fill, "verify", verified_by=staff)
+        # Who may verify is the fills:verify scope, checked before this
+        # runs; here the verifier only has to be a person.
+        return self._transition(ctx, fill, "verify", verified_by=self._require_staff(ctx))
 
     def unverify(self, ctx, fill):
         return self._transition(ctx, fill, "unverify", verified_by=None)
@@ -199,9 +194,13 @@ class FillService(CrudService):
 
     @staticmethod
     def _require_staff(ctx):
+        """A fill names the person who started or verified it, so these two
+        writes need a token that maps to a staff member; a Django session or
+        Basic credential is a login, not a person."""
         if ctx.staff is None:
-            raise InvalidRequest(
-                "This write must name the staff member performing it in the X-Staff-Id header.",
-                code="staff_required",
+            raise InsufficientScope(
+                "Starting or verifying a fill must be done as a staff member: "
+                "authenticate with a bearer token.",
+                code="staff_identity_required",
             )
         return ctx.staff

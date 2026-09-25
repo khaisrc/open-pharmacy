@@ -3,7 +3,9 @@
 from .base import *  # noqa: F403
 from .base import env, require_settings
 
-require_settings(["SECRET_KEY", "DATABASE_URL", "ALLOWED_HOSTS"])
+require_settings(
+    ["SECRET_KEY", "DATABASE_URL", "ALLOWED_HOSTS", "LOGTO_ENDPOINT", "LOGTO_API_RESOURCE"]
+)
 
 SECRET_KEY = env.str("SECRET_KEY")
 DEBUG = env.bool("DEBUG", default=False)
