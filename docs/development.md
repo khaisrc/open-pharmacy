@@ -47,10 +47,11 @@ same thing against the same Compose stack and attaches that report to the run.
 (Logto), against a second database on the same Postgres: the console on
 `http://localhost:8442`, tokens from `http://localhost:8441`. Both host
 ports come from the shell (`AUTH_PORT`, `AUTH_CONSOLE_PORT`) like
-`WEB_PORT`; `LOGTO_ENDPOINT` in `.env.local` must name the same port as
-`AUTH_PORT`, since Logto writes it into every token's issuer. First boot: open the console,
-create the admin, then configure it as [deployment.md](deployment.md)
-describes. For curl without a UI, mint a token the API accepts locally:
+`WEB_PORT`; `AUTH_ISSUER` in `.env.local` must name the same port as
+`AUTH_PORT`, since the provider writes it into every token's issuer. First
+boot: open the console, create the admin, then configure it as
+[identity-providers/logto.md](identity-providers/logto.md) describes. For
+curl without a UI, mint a token the API accepts locally:
 
 ```bash
 docker compose run --rm web python manage.py mint_token --generate-key   # once; paste into .env.local

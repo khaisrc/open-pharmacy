@@ -8,7 +8,7 @@ from .base import ServiceModelAdmin
 
 @admin.register(Staff)
 class StaffAdmin(ServiceModelAdmin):
-    """A row that came from a Logto token (`external_user_id` set) is that
+    """A row that came from an identity provider token (`external_user_id` set) is that
     identity's record: everything but `is_active` is read-only here, and the
     service refuses the rest. A hand-typed row is the directory entry it
     always was."""

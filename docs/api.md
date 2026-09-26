@@ -6,14 +6,15 @@ Swagger UI at `/api/v1/docs/`, ReDoc at `/api/v1/redoc/`.
 ## Authentication
 
 Every endpoint except `/api/v1/health/` and the docs takes
-`Authorization: Bearer <access token>` issued by the Logto identity server
-(`LOGTO_ENDPOINT`) for this API's resource (`LOGTO_API_RESOURCE`). The token
-is verified against Logto's published keys -- signature, issuer, audience,
-expiry -- and read into the principal: who (`sub`, the Logto user id),
-their email, name, roles, pharmacy and board registration (custom claims
-Logto's JWT customizer adds; see [deployment.md](deployment.md)), and the
-scopes their roles grant. No database lookup and no call to Logto per
-request; the token is the identity.
+`Authorization: Bearer <access token>` issued by the identity provider
+(`AUTH_ISSUER`) for this API (`AUTH_AUDIENCE`). The token is verified
+against the provider's published keys -- signature, issuer, audience,
+expiry -- and read into the principal: who (`sub`, the provider's user id),
+their email, name, roles, pharmacy and board registration, and the scopes
+their roles grant -- the identity claims contract, which the provider is
+configured to emit (see [deployment.md](deployment.md) and the provider's
+page under [identity-providers/](identity-providers/)). No database lookup
+and no call to the provider per request; the token is the identity.
 
 The first request from a user creates their [staff record](staff.md) from
 the token; every later token must describe the same person.
@@ -24,7 +25,7 @@ the change history as a login rather than a person, and cannot start or
 verify a fill -- those name a staff member (403 `staff_identity_required`).
 
 Locally, `python manage.py mint_token` signs a token the API accepts without
-a running Logto; see [development.md](development.md).
+a running provider; see [development.md](development.md).
 
 ### Scopes
 
@@ -45,7 +46,7 @@ covers create, update, delete and the resource's actions.
 | addresses | `addresses:read`, `addresses:write` |
 | staff | `staff:read`, `staff:write` |
 
-Logto roles grant them: `admin` and `pharmacist` hold all twenty-two;
+Roles at the provider grant them: `admin` and `pharmacist` hold all twenty-two;
 `certified_technician`, `technician` and `intern` hold every `:read` plus
 `prescriptions:create`, `prescriptions:update_unfilled`, `fills:write`,
 `patients:write` and `addresses:write`. A technician may therefore enter a
@@ -53,8 +54,8 @@ prescription and change it until a fill is started (a cancelled fill does
 not count), after which the change is a 403 with
 `details.reason = "a fill has been started"`; verifying a fill and onboarding
 a pharmacy are a pharmacist's and an admin's. An intern's token must also
-name a supervising pharmacist or technician (`supervising_sub`), or it is
-refused (401 `supervisor_required`).
+name a supervising pharmacist or technician (`supervising_user_id`), or it
+is refused (401 `supervisor_required`).
 
 ## Resources
 

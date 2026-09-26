@@ -1,10 +1,10 @@
-"""Minting access tokens the way Logto does, for tests and the dev issuer.
+"""Minting access tokens the way the identity provider does, for the tests.
 
 One EC P-384 key per process, published as a JWKS the verifier is handed
 in memory (`pharmacy.auth.authentication.set_verifier`), so no test needs a
-running Logto. The claims mirror what the JWT customizer in
-plans/auth emits, so a test token and a real one differ only in
-who signed them.
+running provider. The claims are the identity claims contract
+(`pharmacy.auth.claims`), so a test token and a real one differ only in who
+signed them.
 """
 
 import time
@@ -15,8 +15,10 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from django.conf import settings
 from jwt.algorithms import ECAlgorithm
 
+from pharmacy.auth import claims as c
+from pharmacy.auth.providers import get_provider
 from pharmacy.auth.scopes import ALL_SCOPES, ROLE_SCOPES
-from pharmacy.auth.verifier import LogtoTokenVerifier, key_set_from
+from pharmacy.auth.verifier import TokenVerifier, key_set_from
 
 KID = "test-key"
 
@@ -25,19 +27,19 @@ class TokenIssuer:
     def __init__(self, kid=KID):
         self.kid = kid
         self.private_key = ec.generate_private_key(ec.SECP384R1())
-        self.issuer = f"{settings.LOGTO_ENDPOINT.rstrip('/')}/oidc"
-        self.audience = settings.LOGTO_API_RESOURCE
+        self.issuer = settings.AUTH_ISSUER.rstrip("/")
+        self.audience = settings.AUTH_AUDIENCE
 
     def jwks(self):
         public = ECAlgorithm.to_jwk(self.private_key.public_key(), as_dict=True)
         return {"keys": [{**public, "kid": self.kid, "alg": "ES384", "use": "sig"}]}
 
     def verifier(self):
-        return LogtoTokenVerifier(key_set=key_set_from(self.jwks()))
+        return TokenVerifier(provider=get_provider(), key_set=key_set_from(self.jwks()))
 
     def mint(self, external_user_id, *, scopes=None, roles=("pharmacist",), **claims):
         """A token for `external_user_id`. `scopes` defaults to the union of
-        the given roles' scopes, like Logto's role grants; pass a list (or
+        the given roles' scopes, like the provider's role grants; pass a list (or
         an empty one) to say exactly which."""
         if scopes is None:
             scopes = set()
@@ -63,10 +65,10 @@ _counter = iter(range(1, 10**9))
 
 
 class Identity:
-    """A Logto user as the tests know one: a subject, the claims its
-    customizer would add, and the roles that decide its scopes. `bearer()`
-    puts its token on a client; `register()` creates its Staff row the way
-    a first request would."""
+    """A user at the identity provider as the tests know one: a subject, the
+    contract claims, and the roles that decide its scopes. `bearer()` puts
+    its token on a client; `register()` creates its Staff row the way a
+    first request would."""
 
     def __init__(self, issuer, *, roles=("pharmacist",), pharmacy=None, email=None, **claims):
         n = next(_counter)
@@ -76,17 +78,17 @@ class Identity:
         email = email or f"person{n}@example.local"
         given, family = claims.pop("given_name", f"Person{n}"), claims.pop("family_name", "Tester")
         self.claims = {
-            "email": email,
+            c.EMAIL: email,
             "email_verified": True,
-            "name": f"{given} {family}",
-            "given_name": given,
-            "family_name": family,
-            "pharmacy_id": str(pharmacy.pk) if pharmacy is not None else None,
+            c.NAME: f"{given} {family}",
+            c.GIVEN_NAME: given,
+            c.FAMILY_NAME: family,
+            c.PHARMACY_ID: str(pharmacy.pk) if pharmacy is not None else None,
             **claims,
         }
         if "pharmacist" in self.roles:
-            self.claims.setdefault("registration_state", "NY")
-            self.claims.setdefault("registration_number", f"RPH.{n:06d}")
+            self.claims.setdefault(c.REGISTRATION_STATE, "NY")
+            self.claims.setdefault(c.REGISTRATION_NUMBER, f"RPH.{n:06d}")
 
     def token(self, scopes=None, **overrides):
         claims = {**self.claims, **overrides}

@@ -346,7 +346,7 @@ class TestIdentityRows:
             else api.delete(url)
         )
         assert response.status_code == 409
-        assert response.data["error"]["code"] == "identity_managed_by_logto"
+        assert response.data["error"]["code"] == "identity_managed_externally"
         pharmacist.refresh_from_db()
         assert pharmacist.deleted is None and pharmacist.last_name != "Changed"
 

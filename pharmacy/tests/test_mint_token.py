@@ -9,7 +9,8 @@ from django.core.management.base import CommandError
 from rest_framework.test import APIClient
 
 from pharmacy.auth import authentication
-from pharmacy.auth.verifier import LogtoTokenVerifier, key_set_from
+from pharmacy.auth.providers import get_provider
+from pharmacy.auth.verifier import TokenVerifier, key_set_from
 
 from .test_settings_and_seed import environment
 
@@ -48,22 +49,24 @@ def test_refuses_outside_local():
 
 
 def test_refuses_without_a_key(settings):
-    settings.LOGTO_DEV_SIGNING_KEY = ""
+    settings.AUTH_DEV_SIGNING_KEY = ""
     with pytest.raises(CommandError):
         call_command("mint_token", "--email", "x@example.local")
 
 
 def test_a_dev_token_is_accepted_only_with_the_key(settings, issuer, pharmacy, dev_key):
-    settings.LOGTO_DEV_SIGNING_KEY = dev_key
+    settings.AUTH_DEV_SIGNING_KEY = dev_key
     token = mint(pharmacy)
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
-    # The verifier holds Logto's (here: the session's) keys; the dev key is
-    # consulted for the dev kid only while the setting is present.
-    authentication.set_verifier(LogtoTokenVerifier(key_set=key_set_from(issuer.jwks())))
+    # The verifier holds the provider's (here: the session's) keys; the dev
+    # key is consulted for the dev kid only while the setting is present.
+    authentication.set_verifier(
+        TokenVerifier(provider=get_provider(), key_set=key_set_from(issuer.jwks()))
+    )
     try:
         assert client.get("/api/v1/patients/").status_code == 200
-        settings.LOGTO_DEV_SIGNING_KEY = ""
+        settings.AUTH_DEV_SIGNING_KEY = ""
         response = client.get("/api/v1/patients/")
         assert response.status_code == 401
         assert response.data["error"]["code"] == "token_invalid"

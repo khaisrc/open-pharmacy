@@ -5,7 +5,7 @@ request by the base viewset (and by the admin) and carried down so the
 layers below the view never touch the request object; tests that call a
 service directly build one by hand.
 
-`principal` is who the credential says is acting. A Logto token names a
+`principal` is who the credential says is acting. A bearer token names a
 `Staff` row (`staff`); a Django session or Basic credential names a login
 (`user`). Exactly one of the two is set, and the change history records
 whichever it is.

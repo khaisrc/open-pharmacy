@@ -1,4 +1,4 @@
-"""The same flow against a running Logto, when one is configured.
+"""The Logto adapter against a running Logto, when one is configured.
 
 Skipped unless LOGTO_LIVE_ENDPOINT is set, together with the credentials
 of a machine-to-machine application holding Logto's Management API role
@@ -6,8 +6,9 @@ of a machine-to-machine application holding Logto's Management API role
 exchange enabled (LOGTO_LIVE_APP_ID), and a user to act as
 (LOGTO_LIVE_USER_ID). A real token is minted by the subject-token exchange
 in plans/auth §0.2, verified against the live JWKS, and sent
-through the API. The user's `pharmacy_id` custom data must be a UUID; the
-test creates that pharmacy.
+through the API, verified by discovery against the live instance. The
+user's `pharmacy_id` custom data must be a UUID; the test creates that
+pharmacy.
 """
 
 import json
@@ -19,10 +20,11 @@ import pytest
 from rest_framework.test import APIClient
 
 from pharmacy.auth import authentication
-from pharmacy.auth.verifier import LogtoTokenVerifier
+from pharmacy.auth.providers.logto import LogtoProvider
+from pharmacy.auth.verifier import TokenVerifier
 from pharmacy.models import Staff
 
-from .factories import PharmacyFactory
+from ..factories import PharmacyFactory
 
 pytestmark = pytest.mark.django_db
 
@@ -37,8 +39,9 @@ def live(settings):
     missing = [name for name in NEEDED if not os.environ.get(name)]
     if missing:
         pytest.skip(f"live Logto test needs {', '.join(missing)}")
-    settings.LOGTO_ENDPOINT = ENDPOINT
-    verifier = LogtoTokenVerifier(endpoint=ENDPOINT, audience=settings.LOGTO_API_RESOURCE)
+    settings.AUTH_ISSUER = f"{ENDPOINT}/oidc"
+    provider = LogtoProvider(issuer=settings.AUTH_ISSUER, audience=settings.AUTH_AUDIENCE)
+    verifier = TokenVerifier(provider=provider)
     previous = authentication.get_verifier()
     authentication.set_verifier(verifier)
     yield settings
@@ -92,7 +95,7 @@ def user_token(audience):
 
 
 def test_a_real_logto_token_reaches_the_api(live):
-    token, user = user_token(live.LOGTO_API_RESOURCE)
+    token, user = user_token(live.AUTH_AUDIENCE)
     PharmacyFactory(id=uuid.UUID(user["customData"]["pharmacy_id"]))
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")

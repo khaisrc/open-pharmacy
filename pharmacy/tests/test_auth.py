@@ -1,8 +1,8 @@
 """Bearer tokens: verification, the principal, scopes, and the identity row.
 
 Every token here is minted by the session issuer (conftest) and verified
-against its in-memory key set, so none of this needs a running Logto; the
-claims are the ones Logto's JWT customizer emits.
+against its in-memory key set, so none of this needs a running identity
+provider; the claims are the identity claims contract.
 """
 
 import base64
@@ -12,8 +12,9 @@ import pytest
 from rest_framework.test import APIClient
 
 from pharmacy.auth import authentication
+from pharmacy.auth.providers import get_provider
 from pharmacy.auth.scopes import ALL_SCOPES, TECHNICIAN_SCOPES, Scope
-from pharmacy.auth.verifier import IdentityUnavailable, LogtoTokenVerifier, key_set_from
+from pharmacy.auth.verifier import IdentityUnavailable, TokenVerifier, key_set_from
 from pharmacy.models import FieldChange, Prescription, Staff
 
 from .factories import FillFactory, PrescriptionFactory, StaffFactory
@@ -92,7 +93,7 @@ class TestTokenFailures:
         assert not Staff.objects.exclude(external_user_id="").exists()
 
     def test_identity_server_down_is_503(self, identity):
-        class Down(LogtoTokenVerifier):
+        class Down(TokenVerifier):
             def __init__(self):
                 pass
 
@@ -111,13 +112,15 @@ class TestTokenFailures:
     def test_key_rotation(self, issuer, identity):
         """A token signed by a key the verifier has not seen is refused;
         once the key set holds it, accepted -- PyJWKClient does the refresh
-        against Logto, the in-memory set is swapped here."""
+        against the provider, the in-memory set is swapped here."""
         rotated = TokenIssuer(kid="rotated")
         ident = identity()
         token = rotated.mint(ident.external_user_id, roles=ident.roles, **ident.claims)
         assert bearer(token).get(PATIENTS).status_code == 401
         both = {"keys": issuer.jwks()["keys"] + rotated.jwks()["keys"]}
-        authentication.set_verifier(LogtoTokenVerifier(key_set=key_set_from(both)))
+        authentication.set_verifier(
+            TokenVerifier(provider=get_provider(), key_set=key_set_from(both))
+        )
         try:
             assert bearer(token).get(PATIENTS).status_code == 200
         finally:
@@ -229,10 +232,10 @@ class TestFirstSight:
         assert response.data["error"]["details"]["fields"]
 
     def test_a_changed_supervisor_is_not_an_identity_change(self, identity, pharmacist):
-        intern = identity(roles=("intern",), supervising_sub=pharmacist.external_user_id)
+        intern = identity(roles=("intern",), supervising_user_id=pharmacist.external_user_id)
         intern.register()
         other = identity(roles=("technician",)).register()
-        response = bearer(intern.token(supervising_sub=other.external_user_id)).get(PATIENTS)
+        response = bearer(intern.token(supervising_user_id=other.external_user_id)).get(PATIENTS)
         assert response.status_code == 200
 
     @pytest.mark.parametrize(
@@ -250,7 +253,7 @@ class TestFirstSight:
                 {"pharmacy_id": "00000000-0000-4000-8000-000000000000"},
                 "identity_incomplete",
             ),
-            (("intern",), {"supervising_sub": None}, "supervisor_required"),
+            (("intern",), {"supervising_user_id": None}, "supervisor_required"),
         ],
         ids=[
             "no role",
@@ -320,7 +323,7 @@ class TestSuccession:
         old.register()
         new = identity(roles=("pharmacist",), registration_number="RPH.000124")
         bearer(new.token()).get(PATIENTS)
-        # Suffixed and suspended in Logto by the procedure; were it to get a
+        # Suffixed and suspended at the provider by the procedure; were it to get a
         # token, the email would no longer match.
         response = bearer(old.token(email="old@example.local-DEACTIVATED")).get(PATIENTS)
         assert response.status_code == 401
@@ -393,7 +396,7 @@ class TestTechnicianScopes:
 
 class TestInterns:
     def test_intern_acts_with_a_supervisor_in_the_token(self, identity, pharmacist, prescription):
-        intern = identity(roles=("intern",), supervising_sub=pharmacist.external_user_id)
+        intern = identity(roles=("intern",), supervising_user_id=pharmacist.external_user_id)
         client = bearer(intern.token())
         created = start_fill(client, prescription)
         assert created.status_code == 201
@@ -402,9 +405,9 @@ class TestInterns:
         )
 
     def test_an_intern_token_without_a_supervisor_is_refused_every_time(self, identity, pharmacist):
-        intern = identity(roles=("intern",), supervising_sub=pharmacist.external_user_id)
+        intern = identity(roles=("intern",), supervising_user_id=pharmacist.external_user_id)
         intern.register()
-        response = bearer(intern.token(supervising_sub=None)).get(PATIENTS)
+        response = bearer(intern.token(supervising_user_id=None)).get(PATIENTS)
         assert response.status_code == 401
         assert error(response) == "supervisor_required"
 
@@ -440,21 +443,3 @@ class TestAttribution:
         # its subject, so two identities never share a bucket.
         ident = identity()
         assert ident.principal().pk == ident.external_user_id
-
-
-class TestEndpoints:
-    def test_issuer_is_public_and_keys_are_fetched_internally(self, settings):
-        """Logto writes its public URL into every token's issuer; the API
-        may reach it somewhere else, such as the Compose network."""
-        settings.LOGTO_ENDPOINT = "http://localhost:8441"
-        settings.LOGTO_INTERNAL_ENDPOINT = "http://auth:3001"
-        verifier = LogtoTokenVerifier()
-        assert verifier.issuer == "http://localhost:8441/oidc"
-        assert verifier.jwks_uri == "http://auth:3001/oidc/jwks"
-
-    def test_internal_endpoint_defaults_to_the_public_one(self, settings):
-        settings.LOGTO_ENDPOINT = "https://auth.example.com/"
-        settings.LOGTO_INTERNAL_ENDPOINT = ""
-        verifier = LogtoTokenVerifier()
-        assert verifier.issuer == "https://auth.example.com/oidc"
-        assert verifier.jwks_uri == "https://auth.example.com/oidc/jwks"

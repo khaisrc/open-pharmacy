@@ -50,7 +50,7 @@ class Fill(TimeStampedModel):
         "pharmacy.PharmacyLocation", on_delete=models.PROTECT, related_name="fills"
     )
     status = models.CharField(max_length=16, choices=FillStatus.choices, default=FillStatus.PENDING)
-    # The staff member who created the fill, from the X-Staff-Id header.
+    # The staff member who created the fill: the one the bearer token names.
     operator = models.ForeignKey(
         "pharmacy.Staff", on_delete=models.PROTECT, related_name="fills_operated"
     )

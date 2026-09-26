@@ -27,7 +27,7 @@ class FieldChange(models.Model):
     old_value = models.JSONField(null=True)
     new_value = models.JSONField(null=True)
     changed_at = models.DateTimeField(auto_now_add=True)
-    # Exactly one of the two: a Logto token names a staff member, a Django
+    # Exactly one of the two: a bearer token names a staff member, a Django
     # session or Basic credential names a login.
     changed_by_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

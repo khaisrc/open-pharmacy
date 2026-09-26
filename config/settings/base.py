@@ -101,7 +101,7 @@ REST_FRAMEWORK = {
     # A Logto bearer token first; Basic and session stay for the transition
     # (and for the admin), with every scope.
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "pharmacy.auth.LogtoJWTAuthentication",
+        "pharmacy.auth.BearerTokenAuthentication",
         "rest_framework.authentication.BasicAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
@@ -180,20 +180,23 @@ SPECTACULAR_SETTINGS = {
 # constant because the same code serves a different store in each environment.
 HOME_PHARMACY_LOCATION_NCPDP_ID = env.str("HOME_PHARMACY_LOCATION_NCPDP_ID", default="4417829")
 
-# The identity server. Access tokens must carry issuer {LOGTO_ENDPOINT}/oidc
-# -- the public URL, which is what Logto writes into them -- and audience
-# LOGTO_API_RESOURCE, the API resource indicator configured in Logto. The
-# keys are fetched from LOGTO_INTERNAL_ENDPOINT when that is set: the
-# address this service reaches Logto at when it is not the public one (the
-# Compose network, a private subnet behind a proxy). uat and prod require
-# the first and the last; local points at the Compose service.
-LOGTO_ENDPOINT = env.str("LOGTO_ENDPOINT", default="http://localhost:8441")
-LOGTO_INTERNAL_ENDPOINT = env.str("LOGTO_INTERNAL_ENDPOINT", default="")
-LOGTO_API_RESOURCE = env.str("LOGTO_API_RESOURCE", default="https://api.open-pharmacy.local")
+# The identity provider. AUTH_PROVIDER is the adapter that knows where it
+# publishes its keys and how it lays out its claims (pharmacy.auth.providers);
+# AUTH_ISSUER is the `iss` a token must carry -- the provider's public
+# issuer URL, which is what it writes into tokens -- and AUTH_AUDIENCE the
+# `aud`, this API's identifier at the provider. AUTH_INTERNAL_URL is where
+# this service reaches the provider when that is not the public URL (the
+# Compose network, a private subnet behind a proxy); keys and discovery are
+# fetched there. uat and prod require issuer and audience; local points at
+# the Compose service.
+AUTH_PROVIDER = env.str("AUTH_PROVIDER", default="pharmacy.auth.providers.logto.LogtoProvider")
+AUTH_ISSUER = env.str("AUTH_ISSUER", default="http://localhost:8441/oidc")
+AUTH_INTERNAL_URL = env.str("AUTH_INTERNAL_URL", default="")
+AUTH_AUDIENCE = env.str("AUTH_AUDIENCE", default="https://api.open-pharmacy.local")
 # Local only: a PEM private key the `mint_token` command signs dev tokens
-# with, and the verifier accepts alongside Logto's keys. Never set outside
-# local; `local.py` is the only settings module that reads it.
-LOGTO_DEV_SIGNING_KEY = ""
+# with, and the verifier accepts alongside the provider's keys. Never set
+# outside local; `local.py` is the only settings module that reads it.
+AUTH_DEV_SIGNING_KEY = ""
 
 
 LOGGING = {

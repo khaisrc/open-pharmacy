@@ -158,7 +158,7 @@ def prescription(db):
 @pytest.fixture(scope="session")
 def issuer():
     """One signing key for the session; the verifier trusts it and nothing
-    else, so no test needs a running Logto."""
+    else, so no test needs a running identity provider."""
     issuer = TokenIssuer()
     authentication.set_verifier(issuer.verifier())
     yield issuer
@@ -172,7 +172,7 @@ def _tokens(issuer):
 
 @pytest.fixture
 def identity(issuer, pharmacy):
-    """A factory for Logto identities: identity(roles=..., pharmacy=...)."""
+    """A factory for identities at the provider: identity(roles=..., pharmacy=...)."""
 
     def make(**kwargs):
         kwargs.setdefault("pharmacy", pharmacy)

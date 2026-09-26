@@ -25,38 +25,39 @@ at no particular one.
 
 ## Identity records
 
-A user's first request with a Logto access token creates their staff record
-from the token's claims: `external_user_id` is the token's subject (Logto's
-user id), and `email`, the name, `roles`, `pharmacy` and the board
-registration are what the token said. The record is **never updated from a
+A user's first request with an access token creates their staff record from
+the token's claims: `external_user_id` is the token's subject (the identity
+provider's user id), and `email`, the name, `roles`, `pharmacy` and the
+board registration are what the token said. The record is **never updated from a
 token again**. Identity per subject is immutable by policy: if any of those
-facts changes, the person gets a new Logto user, and a token for the old
+facts changes, the person gets a new user at the provider, and a token for the old
 subject whose claims no longer match its record is refused (401
 `identity_changed`). A token that cannot make a valid record -- a pharmacist
 with no registration, a technician with no `pharmacy_id`, no recognised role
 -- is refused too (401 `identity_incomplete`), and nothing is written.
 
 A record that came from a token (`is_external`) is read-only through this
-API and the admin except `is_active` (409 `identity_managed_by_logto`). A
+API and the admin except `is_active` (409 `identity_managed_externally`). A
 record typed in here has no `external_user_id`: it is a directory entry that
 can be named but cannot act.
 
-Interns: the token must carry `supervising_sub`, the subject of a supervising
-pharmacist or technician. The API checks it is there (401
+Interns: the token must carry `supervising_user_id`, the subject of a
+supervising pharmacist or technician. The API checks it is there (401
 `supervisor_required`) and records nothing -- who supervised whom, and when
-that changed, is Logto's record (the intern's `custom_data` and Logto's audit
-log), so a change of supervisor is not an identity change.
+that changed, is the identity provider's record, so a change of supervisor
+is not an identity change.
 
 ### Changing a person's details
 
-In Logto: suffix the old user's primary email with `-DEACTIVATED`, suspend
-the user, and create the new user with the real email, profile, roles and
-`custom_data`. Nothing to do here: the new user's first request creates the
-successor record and, because the registration and NPI constraints hold over
-*active* records only, deactivates the record that held the same
-registration or NPI -- with a change-history row naming the successor as the
-actor. An admin may also set `is_active` by hand. The person's history is
-split across the two subjects, which is the correct audit answer.
+At the identity provider: deactivate the old user and create the new one
+with the real email, profile, roles and the rest (the Logto steps are in
+[identity-providers/logto.md](identity-providers/logto.md)). Nothing to do
+here: the new user's first request creates the successor record and,
+because the registration and NPI constraints hold over *active* records
+only, deactivates the record that held the same registration or NPI -- with
+a change-history row naming the successor as the actor. An admin may also
+set `is_active` by hand. The person's history is split across the two
+subjects, which is the correct audit answer.
 
 ## Pharmacist-in-charge
 

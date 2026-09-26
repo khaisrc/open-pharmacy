@@ -1,6 +1,6 @@
 # Identity provider abstraction: Logto as one adapter, not the design
 
-Status: **proposal, awaiting review** — nothing below is implemented.
+Status: **implemented** (see "Implementation notes" at the end).
 
 ## 1. The problem, measured
 
@@ -147,3 +147,31 @@ you take it, the renamed claim.
    asks for.
 3. **Discovery at start-up**, or hard-coded paths per adapter? Default:
    discovery, with the adapter allowed to pin `jwks_uri` as a fallback.
+
+## 9. Implementation notes
+
+Built as §2–§3, with the three §8 defaults taken (the claim is
+`supervising_user_id`; the setting is `AUTH_ISSUER`; discovery, with the
+Logto adapter pinning `{issuer}/jwks` as a fallback). Differences:
+
+- **`AUTH_INTERNAL_URL`** (renamed from `LOGTO_INTERNAL_ENDPOINT`) is
+  applied by the adapter to *both* discovery and the JWKS URI: the
+  discovery document names the public `jwks_uri`, and the adapter swaps its
+  origin for the internal one before fetching.
+- **The contract lives in `pharmacy/auth/claims.py`** as named constants;
+  `Principal.from_claims`, `mint_token` and the test issuer read and write
+  those names, so a contract change is one file and its callers.
+- **`AUTH_PROVIDER` is resolved once per process** through
+  `providers.get_provider()` with a `set_provider()` seam for tests; the
+  verifier builds its `PyJWKClient` lazily so discovery happens on the
+  first token, not at import.
+- **`HasScope`'s error details and the two service refusals now render
+  scope names as strings** (an `Enum` leaked into `details` before).
+- The Logto-shaped names that remain are where §3 said they would be:
+  `providers/logto.py`, `tests/providers/test_logto_live.py`,
+  `scripts/create_auth_admin.py`, the `auth` Compose service's image and
+  comments, `docs/identity-providers/logto.md`, the two plans, and the
+  `.env.example` hints that show Logto's issuer shape as an example.
+- **Verified**: the customizer on the sandbox Logto was re-applied with the
+  renamed claim and the live adapter test passes through discovery; the
+  unit suite and the curl e2e suite are green on the renamed settings.

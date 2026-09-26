@@ -15,7 +15,7 @@ class StaffSerializer(serializers.ModelSerializer):
     sub-resource of a pharmacy, so the viewset attaches it on create and a
     record cannot be moved to another employer by PATCH.
 
-    A row with `external_user_id` came from a Logto token and is that
+    A row with `external_user_id` came from an identity provider token and is that
     identity's record: read-only here except `is_active` (the service
     refuses the rest with 409). `email` and `roles` are the token's."""
 

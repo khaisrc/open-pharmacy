@@ -4,8 +4,8 @@
 it finds the row for the token's subject, or creates it on first sight,
 and refuses a token whose identity no longer matches what that row
 recorded. That comparison is what makes "identity per subject is
-immutable" a rule rather than a convention -- Logto issues a token for an
-edited user just the same.
+immutable" a rule rather than a convention -- the identity provider issues
+a token for an edited user just the same.
 """
 
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -21,8 +21,8 @@ from .base import CrudService
 from .context import WriteContext
 
 # The columns a token fixes for the life of the row. `is_active` is not
-# among them: it is local, and a supervisor (`supervising_sub`) is Logto's
-# own record rather than part of who the intern is.
+# among them: it is local, and a supervisor (`supervising_user_id`) is the
+# identity provider's own record rather than part of who the intern is.
 IDENTITY_FIELDS = (
     "email",
     "first_name",
@@ -33,7 +33,7 @@ IDENTITY_FIELDS = (
     "registration_state",
     "registration_number",
 )
-# What an admin may still change on a row Logto owns.
+# What an admin may still change on a row the identity provider owns.
 LOCALLY_EDITABLE = frozenset({"is_active"})
 
 
@@ -72,9 +72,9 @@ class StaffService(CrudService):
         changed = {name for name, value in fields.items() if getattr(instance, name, None) != value}
         if instance.is_external and changed - LOCALLY_EDITABLE:
             raise Conflict(
-                "This staff member's identity is managed by the identity server; only "
+                "This staff member's identity is managed by the identity provider; only "
                 "is_active can be changed here.",
-                code="identity_managed_by_logto",
+                code="identity_managed_externally",
                 details={"external_user_id": instance.external_user_id, "fields": sorted(changed)},
             )
 
@@ -89,7 +89,7 @@ class StaffService(CrudService):
         if principal.supervising_external_user_id == "" and role == StaffRole.INTERN:
             raise Unauthenticated(
                 "An intern's token must name a supervising pharmacist or technician "
-                "(supervising_sub).",
+                "(supervising_user_id).",
                 code="supervisor_required",
             )
         pharmacy = None
@@ -119,7 +119,7 @@ class StaffService(CrudService):
         if staff.role == StaffRole.INTERN and not principal.supervising_external_user_id:
             raise Unauthenticated(
                 "An intern's token must name a supervising pharmacist or technician "
-                "(supervising_sub).",
+                "(supervising_user_id).",
                 code="supervisor_required",
             )
         differing = sorted(

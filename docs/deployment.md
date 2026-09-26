@@ -16,10 +16,11 @@ refuse to start with anything missing; `prod` additionally refuses the local
 | `THROTTLE_ANON`, `THROTTLE_USER` | | e.g. `100/min` |
 | `HOME_PHARMACY_LOCATION_NCPDP_ID` | | the store this deployment serves; default `4417829` |
 | `SECRETS_FILE` | | optional env file a secrets sidecar writes, read before the environment |
-| `LOGTO_ENDPOINT` | yes | the Logto instance's public URL; a token's issuer must be `{LOGTO_ENDPOINT}/oidc` |
-| `LOGTO_INTERNAL_ENDPOINT` | | where this service fetches Logto's keys (`…/oidc/jwks`) when that is not the public URL -- the Compose network locally, a private address behind a proxy |
-| `LOGTO_API_RESOURCE` | yes | this API's resource indicator in Logto, the token audience |
-| `LOGTO_DEV_SIGNING_KEY` | local only | a PEM key `mint_token` signs dev tokens with; read by `local.py` alone |
+| `AUTH_PROVIDER` | | the identity provider adapter; default `pharmacy.auth.providers.logto.LogtoProvider` |
+| `AUTH_ISSUER` | yes | the provider's issuer URL, what it writes into a token's `iss` |
+| `AUTH_INTERNAL_URL` | | where this service reaches the provider for discovery and keys when that is not the public URL -- the Compose network locally, a private address behind a proxy |
+| `AUTH_AUDIENCE` | yes | this API's identifier at the provider, the token audience |
+| `AUTH_DEV_SIGNING_KEY` | local only | a PEM key `mint_token` signs dev tokens with; read by `local.py` alone |
 
 `.env.example` lists the same contract without values.
 
@@ -45,52 +46,43 @@ set at or above the highest number it already holds. It is set through the
 API -- `rx_number_seed` and `step` on `POST` or `PATCH /pharmacies/{id}/`
 -- or in the admin's RxCounter page.
 
-## The identity server
+## The identity provider
 
-Users are created in Logto, sign in through the UI, and the UI sends the
-access token on every request. Logto needs, once, under the tenant the API
-trusts:
+Users are created at the identity provider, sign in through the UI, and the
+UI sends the access token on every request. The API verifies the token
+against the provider's published keys and reads the **identity claims
+contract** out of it (`pharmacy/auth/claims.py`): `sub`, `email`, the OIDC
+profile names, `roles`, `scope`, `pharmacy_id`, the board registration, and
+`supervising_user_id` for an intern. Nothing in the service knows which
+product is behind that; an adapter in `pharmacy/auth/providers/` knows
+where the provider publishes its keys and how its native claims map onto
+the contract. `AUTH_PROVIDER` names the adapter; `AUTH_ISSUER` and
+`AUTH_AUDIENCE` are the `iss` and `aud` a token must carry.
 
-1. **An API resource** whose indicator is `LOGTO_API_RESOURCE` (token TTL
-   900 s), with every scope in `pharmacy/auth/scopes.py` created on it by
-   name.
+Whatever the provider, it needs, once:
+
+1. **This API as an audience** (`AUTH_AUDIENCE`) with every scope in
+   `pharmacy/auth/scopes.py` defined on it by name, and access tokens of
+   about 15 minutes.
 2. **Roles** named `admin`, `pharmacist`, `certified_technician`,
    `technician`, `intern`, each granted the scopes `ROLE_SCOPES` in that
    module lists. A user may hold several.
-3. **An application** for the UI (single-page, PKCE) that requests the
-   resource and its scopes at sign-in.
-4. **The access-token JWT customizer**, so the token carries what the API
-   needs to know who is acting. `name` and `profile.givenName`/`familyName`
-   are Logto's own user fields; `customData` holds the rest:
-   ```text
-   const getCustomJwtClaims = async ({ token, context }) => {
-     const user = context?.user;
-     if (!user) { return {}; }
-     return {
-       email: user.primaryEmail,
-       email_verified: Boolean(user.primaryEmailVerified),
-       name: user.name,
-       given_name: user.profile?.givenName,
-       family_name: user.profile?.familyName,
-       roles: (user.roles ?? []).map((role) => role.name),
-       pharmacy_id: user.customData?.pharmacy_id,
-       registration_state: user.customData?.registration_state,
-       registration_number: user.customData?.registration_number,
-       supervising_sub: user.customData?.supervising_sub,
-     };
-   };
-   ```
-   Logto issues a token even when the customizer throws, so the API, not
-   Logto, refuses a token without `email` (401 `token_without_email`).
-5. **Users**: primary email, given and family name, one or more roles, and
-   `custom_data` `{pharmacy_id, registration_state, registration_number}`
-   (`pharmacy_id` is this API's UUID for the employer; not needed for an
-   admin-only user; `supervising_sub` for an intern). A token that cannot
-   make a valid staff record is refused, so the console is where
-   completeness shows.
+3. **An application** for the UI that requests this audience and its
+   scopes at sign-in.
+4. **Tokens that carry the contract** -- every provider has its own
+   mechanism for adding claims; the adapter's page says how.
+5. **Users** with a primary email, given and family name, one or more
+   roles, and the employer / registration / supervisor data the contract
+   needs. The API refuses a token that cannot make a valid staff record, so
+   completeness is enforced by refusal.
 
-Signing keys rotate in Logto's console without a redeploy: the API refreshes
+Signing keys rotate at the provider without a redeploy: the API refreshes
 its cached key set on an unknown key id.
+
+Adapters and their configuration: [Logto](identity-providers/logto.md)
+(the default). Adding another is a subclass of `OIDCProvider` that
+overrides `claims()` where the native layout differs, plus a page like
+Logto's.
 
 ## Serving
 

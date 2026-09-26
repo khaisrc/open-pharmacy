@@ -1,11 +1,11 @@
 """A dev access token, for curl without a UI.
 
-Signs a token with LOGTO_DEV_SIGNING_KEY -- a PEM private key only local.py
-reads -- carrying the same claims Logto's JWT customizer emits, so the API
-treats it exactly as a Logto token. Two guards, like seed_local: the
-command refuses outside DJANGO_ENV=local, and the verifier only accepts the
-dev key when that setting is non-empty, which no other settings module
-makes it.
+Signs a token with AUTH_DEV_SIGNING_KEY -- a PEM private key only local.py
+reads -- carrying the identity claims contract (pharmacy.auth.claims), so
+the API treats it exactly as a token from the identity provider. Two
+guards, like seed_local: the command refuses outside DJANGO_ENV=local, and
+the verifier only accepts the dev key when that setting is non-empty, which
+no other settings module makes it.
 
     python manage.py mint_token --generate-key        # once; paste into .env.local
     python manage.py mint_token --email rph@example.local --roles pharmacist \\
@@ -22,12 +22,13 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
+from pharmacy.auth import claims as c
 from pharmacy.auth.scopes import ROLE_SCOPES
 from pharmacy.auth.verifier import DEV_KID
 
 
 class Command(BaseCommand):
-    help = "Mint a Logto-shaped access token signed with the local dev key."
+    help = "Mint an access token in the identity claims contract, signed with the local dev key."
 
     def add_arguments(self, parser):
         parser.add_argument("--generate-key", action="store_true", help="Print a new PEM key.")
@@ -40,7 +41,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--registration", nargs=2, metavar=("STATE", "NUMBER"), help="Board registration."
         )
-        parser.add_argument("--supervisor", help="supervising_sub, for an intern.")
+        parser.add_argument("--supervisor", help="supervising_user_id, for an intern.")
         parser.add_argument("--scopes", nargs="*", help="Defaults to the roles' scopes.")
         parser.add_argument("--ttl", type=int, default=3600, help="Seconds until expiry.")
 
@@ -56,14 +57,14 @@ class Command(BaseCommand):
                 serialization.NoEncryption(),
             ).decode()
             self.stdout.write(
-                "Put this in .env.local as LOGTO_DEV_SIGNING_KEY (quote it; keep the newlines):\n"
+                "Put this in .env.local as AUTH_DEV_SIGNING_KEY (one line, newlines as \\n):\n"
             )
             self.stdout.write(pem)
             return
-        pem = settings.LOGTO_DEV_SIGNING_KEY
+        pem = settings.AUTH_DEV_SIGNING_KEY
         if not pem:
             raise CommandError(
-                "LOGTO_DEV_SIGNING_KEY is not set; run `mint_token --generate-key` first."
+                "AUTH_DEV_SIGNING_KEY is not set; run `mint_token --generate-key` first."
             )
         if not options["email"]:
             raise CommandError("--email is required.")
@@ -75,25 +76,25 @@ class Command(BaseCommand):
             for role in roles:
                 scopes |= ROLE_SCOPES.get(role, frozenset())
         now = int(time.time())
+        derived_sub = "dev-" + uuid.uuid5(uuid.NAMESPACE_URL, options["email"]).hex[:12]
         claims = {
             "jti": uuid.uuid4().hex,
-            "sub": options["sub"]
-            or "dev-" + uuid.uuid5(uuid.NAMESPACE_URL, options["email"]).hex[:12],
+            c.SUBJECT: options["sub"] or derived_sub,
             "iat": now,
             "exp": now + options["ttl"],
-            "iss": f"{settings.LOGTO_ENDPOINT.rstrip('/')}/oidc",
-            "aud": settings.LOGTO_API_RESOURCE,
+            "iss": settings.AUTH_ISSUER.rstrip("/"),
+            "aud": settings.AUTH_AUDIENCE,
             "client_id": "mint_token",
-            "scope": " ".join(sorted(str(s) for s in scopes)),
-            "email": options["email"],
+            c.SCOPE: " ".join(sorted(str(s) for s in scopes)),
+            c.EMAIL: options["email"],
             "email_verified": True,
-            "name": f"{options['given_name']} {options['family_name']}",
-            "given_name": options["given_name"],
-            "family_name": options["family_name"],
-            "roles": roles,
-            "pharmacy_id": options["pharmacy"],
-            "supervising_sub": options["supervisor"],
+            c.NAME: f"{options['given_name']} {options['family_name']}",
+            c.GIVEN_NAME: options["given_name"],
+            c.FAMILY_NAME: options["family_name"],
+            c.ROLES: roles,
+            c.PHARMACY_ID: options["pharmacy"],
+            c.SUPERVISING_USER_ID: options["supervisor"],
         }
         if options["registration"]:
-            claims["registration_state"], claims["registration_number"] = options["registration"]
+            claims[c.REGISTRATION_STATE], claims[c.REGISTRATION_NUMBER] = options["registration"]
         self.stdout.write(jwt.encode(claims, key, algorithm="ES384", headers={"kid": DEV_KID}))

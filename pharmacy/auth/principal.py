@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 from pharmacy.models import highest_role
 
+from . import claims as c
 from .scopes import ALL_SCOPES
 
 
@@ -11,8 +12,8 @@ from .scopes import ALL_SCOPES
 class Principal:
     """The identity behind a request.
 
-    From a Logto token: every field is a claim, `staff` is the row the
-    subject maps to. From a Django session or Basic credential (the admin,
+    From a bearer token: every field is a contract claim (`pharmacy.auth.claims`),
+    `staff` is the row the subject maps to. From a Django session or Basic credential (the admin,
     and the transition): `external_user_id` is `django:<pk>`, every scope is
     held, and `staff` is None -- such an actor can do everything except the
     two writes that must name a person.
@@ -55,18 +56,20 @@ class Principal:
 
     @classmethod
     def from_claims(cls, claims):
+        """From contract claims -- what a provider adapter's `claims()`
+        returns. The one place the contract's names are read."""
         return cls(
-            external_user_id=claims["sub"],
-            email=claims.get("email") or "",
-            name=claims.get("name") or "",
-            given_name=claims.get("given_name") or "",
-            family_name=claims.get("family_name") or "",
-            roles=tuple(claims.get("roles") or ()),
-            pharmacy_id=claims.get("pharmacy_id") or None,
-            registration_state=claims.get("registration_state") or "",
-            registration_number=claims.get("registration_number") or "",
-            supervising_external_user_id=claims.get("supervising_sub") or "",
-            scopes=frozenset((claims.get("scope") or "").split()),
+            external_user_id=claims[c.SUBJECT],
+            email=claims.get(c.EMAIL) or "",
+            name=claims.get(c.NAME) or "",
+            given_name=claims.get(c.GIVEN_NAME) or "",
+            family_name=claims.get(c.FAMILY_NAME) or "",
+            roles=tuple(claims.get(c.ROLES) or ()),
+            pharmacy_id=claims.get(c.PHARMACY_ID) or None,
+            registration_state=claims.get(c.REGISTRATION_STATE) or "",
+            registration_number=claims.get(c.REGISTRATION_NUMBER) or "",
+            supervising_external_user_id=claims.get(c.SUPERVISING_USER_ID) or "",
+            scopes=frozenset((claims.get(c.SCOPE) or "").split()),
         )
 
     @classmethod

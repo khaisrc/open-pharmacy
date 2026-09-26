@@ -50,6 +50,7 @@ pharmacy/services/     same split; every write and every rule (base.py: CrudServ
 pharmacy/serializers/  same split; the live-duplicate check in base.py
 pharmacy/views/        same split; adapters over the two above, nested routes in base.py
 pharmacy/admin/        same split; the Django admin as another adapter (base.py: ServiceModelAdmin)
+pharmacy/auth/         bearer-token verification, the claims contract, scopes; providers/ holds the one adapter per identity product
 pharmacy/filters.py    every list filterset
 pharmacy/validators.py NPI check digit, NDC and NCPDP normalization
 pharmacy/exceptions.py the error envelope and every 409
@@ -146,8 +147,10 @@ by the prescription's row lock, not a CHECK; the database constraints on a
 fill are single-row facts only. `is_partial` is derived the same way.
 
 **Who is acting is the token.** `pharmacy/auth/` verifies the bearer token
-against Logto's keys, reads it into a `Principal` and resolves the `Staff`
-row for its subject (`services.staff.identify`: created on first sight,
+against the identity provider's keys -- through an adapter in
+`pharmacy/auth/providers/`, the only place a provider's name or paths may
+appear -- maps its claims to the contract in `pharmacy/auth/claims.py`,
+reads it into a `Principal` and resolves the `Staff` row for its subject (`services.staff.identify`: created on first sight,
 never updated from a token, refused if the claims no longer match). The base
 viewset and the admin turn that -- or the Django user behind a Basic or
 session credential, who holds every scope -- into `WriteContext.principal`;

@@ -275,7 +275,7 @@ so the §3.2 comparison ignores it.
        pharmacy_id: user.customData?.pharmacy_id,
        registration_state: user.customData?.registration_state,
        registration_number: user.customData?.registration_number,
-       supervising_sub: user.customData?.supervising_sub,
+       supervising_user_id: user.customData?.supervising_user_id,
      };
    };
    ```
@@ -451,3 +451,10 @@ What was built follows §1–§9. Differences and discoveries:
   test, off without `LOGTO_LIVE_ENDPOINT`; it passes when pointed at the
   sandbox instance). `ruff check`, `ruff format --check`,
   `makemigrations --check` and `spectacular --fail-on-warn` are clean.
+- **Superseded in part by `plans/auth-provider/plan.md`**: the Logto-named
+  classes, settings, error code and claim described above were renamed
+  and the provider-specific knowledge moved behind an adapter. Where this
+  document says `LogtoJWTAuthentication`, `LOGTO_ENDPOINT`,
+  `identity_managed_by_logto` or `supervising_sub`, read
+  `BearerTokenAuthentication`, `AUTH_ISSUER`, `identity_managed_externally`
+  and `supervising_user_id`.

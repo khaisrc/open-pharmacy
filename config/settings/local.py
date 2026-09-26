@@ -21,4 +21,4 @@ CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=["http://localho
 
 # Dev tokens from `manage.py mint_token`, for curl without a UI. Local only:
 # no other settings module reads this, so the variable means nothing elsewhere.
-LOGTO_DEV_SIGNING_KEY = env.str("LOGTO_DEV_SIGNING_KEY", default="")
+AUTH_DEV_SIGNING_KEY = env.str("AUTH_DEV_SIGNING_KEY", default="")

@@ -2,11 +2,11 @@
 
 This is the domain record a state board can look up -- the person whose name
 a transfer record names. It is also the identity record for the API: a
-Logto access token's first appearance inserts a row carrying
+bearer token's first appearance inserts a row carrying
 `external_user_id` (the token's subject) and what the token says about the
 person, and that row is never updated from a token again. Identity per
 subject is immutable by policy -- a change of email, name, role or
-registration is a new Logto user -- and `services.staff` refuses a token
+registration is a new user at the identity provider -- and `services.staff` refuses a token
 whose claims no longer match its row. A row without `external_user_id` is a
 directory entry typed in by hand; it can be named, but it cannot act.
 
@@ -31,7 +31,7 @@ class StaffRole(models.TextChoices):
     INTERN = "intern", "Pharmacy intern"
 
 
-# A person may hold several roles in Logto; the first of these they hold is
+# A person may hold several roles at the identity provider; the first they hold is
 # the one `Staff.role` records and the rules key on. An admin is a superuser
 # employed by no particular pharmacy.
 ROLE_PRECEDENCE = [
@@ -80,7 +80,7 @@ class Staff(TimeStampedModel):
     that should never have existed.
     """
 
-    # The Logto subject this row was created from, and the email it carried.
+    # The token subject this row was created from, and the email it carried.
     # Blank on a row typed in by hand.
     external_user_id = models.CharField(max_length=32, blank=True)
     email = models.EmailField(blank=True)
@@ -120,7 +120,7 @@ class Staff(TimeStampedModel):
         verbose_name_plural = "staff"
         constraints = [
             # Partial: over live, active rows, and never over blanks. Active
-            # rather than live so that a successor identity -- the new Logto
+            # rather than live so that a successor identity -- the new
             # user created when a person's details change -- can hold the
             # registration once the old row is deactivated.
             models.UniqueConstraint(
@@ -153,7 +153,7 @@ class Staff(TimeStampedModel):
 
     @property
     def is_external(self):
-        """Created from a token, so owned by Logto: read-only here."""
+        """Created from a token, so owned by the identity provider: read-only here."""
         return bool(self.external_user_id)
 
     @property

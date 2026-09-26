@@ -1,6 +1,6 @@
 """Every scope the API knows, named once.
 
-The same names are created on the API resource in Logto and granted to its
+The same names are created at the identity provider and granted to its
 roles; a token's `scope` claim is a space-separated subset. `read` covers
 list, detail and the nested child lists; `write` covers create, update,
 delete and a resource's actions. Prescriptions split their update scope in
@@ -51,8 +51,8 @@ TECHNICIAN_SCOPES = READ_SCOPES | {
     Scope.ADDRESSES_WRITE,
 }
 
-# The scopes each Logto role grants, as documented for whoever configures
-# Logto; the API itself only ever reads the token's `scope` claim.
+# The scopes each role grants, as documented for whoever configures the
+# identity provider; the API itself only ever reads the token's `scope` claim.
 ROLE_SCOPES = {
     "admin": ALL_SCOPES,
     "pharmacist": ALL_SCOPES,
