@@ -60,10 +60,24 @@ the profile when you want the console, or to sign in against the real
 provider.
 
 It runs against a second database on the same Postgres: the console on
-`http://localhost:8442`, tokens from `http://localhost:8441`. Both host
+`http://127.0.0.1:8442`, tokens from `http://localhost:8441`. Both host
 ports come from the shell (`AUTH_PORT`, `AUTH_CONSOLE_PORT`) like
 `WEB_PORT`; `AUTH_ISSUER` in `.env.local` must name the same port as
 `AUTH_PORT`, since the provider writes it into every token's issuer.
+
+Open the console at `127.0.0.1`, not `localhost`. The console is served on
+one port and calls the default tenant's management API on the other, and
+Logto sends the CORS headers for that cross-origin call only when the
+browser's origin matches its `ADMIN_ENDPOINT`. Logto's own start script
+forces `NODE_ENV=production`, and in production it drops any origin whose
+hostname is the literal string `localhost` as unsafe. So `ADMIN_ENDPOINT`
+names `127.0.0.1` -- the same host, but a hostname that survives the check.
+Reaching the console on `localhost:8442` instead loads the page and signs
+you in, then fails every management call with a CORS error in the browser
+console:
+
+    Access to fetch at 'http://localhost:8441/api/users' from origin
+    'http://localhost:8442' has been blocked by CORS policy
 
 The one-shot `auth-seed` service creates the console's first admin from
 `AUTH_ADMIN_USERNAME` / `AUTH_ADMIN_PASSWORD` in `.env.local` (`admin` /

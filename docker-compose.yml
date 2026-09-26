@@ -67,11 +67,20 @@ services:
     # into a token's issuer. The API fetches keys over the Compose network
     # instead (AUTH_INTERNAL_URL in .env.local), so the host ports are free
     # to be whatever is not taken.
+    #
+    # ADMIN_ENDPOINT is 127.0.0.1 rather than localhost on purpose, so open
+    # the console at http://127.0.0.1:8442. The console runs on this port but
+    # calls the default tenant's management API on the other one, and Logto
+    # only sends the CORS headers for that cross-origin call if the browser's
+    # origin matches ADMIN_ENDPOINT. Its `npm start` forces
+    # NODE_ENV=production, and in production it drops any origin whose
+    # hostname is the literal string `localhost` as unsafe -- which would be
+    # this one. 127.0.0.1 is the same host and survives the check.
     environment:
       TRUST_PROXY_HEADER: 1
       DB_URL: postgres://pharmacy:pharmacy@db:5432/auth
       ENDPOINT: http://localhost:${AUTH_PORT:-8441}
-      ADMIN_ENDPOINT: http://localhost:${AUTH_CONSOLE_PORT:-8442}
+      ADMIN_ENDPOINT: http://127.0.0.1:${AUTH_CONSOLE_PORT:-8442}
     ports:
       - "${AUTH_PORT:-8441}:3001"
       - "${AUTH_CONSOLE_PORT:-8442}:3002"
@@ -87,7 +96,7 @@ services:
       auth:
         condition: service_healthy
     environment:
-      ADMIN_ENDPOINT: http://localhost:${AUTH_CONSOLE_PORT:-8442}
+      ADMIN_ENDPOINT: http://127.0.0.1:${AUTH_CONSOLE_PORT:-8442}
       AUTH_INTERNAL_ADMIN_ENDPOINT: http://auth:3002
     volumes:
       - .:/app

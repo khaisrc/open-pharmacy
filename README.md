@@ -51,7 +51,7 @@ without it. Add it when you want the console or a real sign-in:
 
 ```bash
 docker compose --profile auth up                 # or: make run
-open http://localhost:8442/console/              # identity server console, admin / Passw0rd!
+open http://127.0.0.1:8442/console/              # identity server console, admin / Passw0rd!
 ```
 
 Port 8000 taken? Set `WEB_PORT` in the shell (Compose reads the port mapping

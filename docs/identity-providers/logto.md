@@ -72,7 +72,9 @@ profile keeps it out of the default stack, which the API does not need it
 for), seeded with `--dapc`
 (the admin tenant's password policy otherwise consults
 api.pwnedpasswords.com, which an offline host cannot reach), with its
-console on `http://localhost:8442` and the first admin created by the
+console on `http://127.0.0.1:8442` (127.0.0.1 rather than localhost: see
+[../development.md](../development.md), Logto blocks a `localhost` origin
+on its management API) and the first admin created by the
 one-shot `auth-seed` service from `AUTH_ADMIN_USERNAME` /
 `AUTH_ADMIN_PASSWORD` in `.env.local`. Logto selects the admin tenant by the
 request's `Host` header matching `ADMIN_ENDPOINT`, which is why that seed
