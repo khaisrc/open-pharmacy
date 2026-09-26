@@ -63,6 +63,7 @@ Configuration comes from the environment:
 | `API_USER` | `admin` |
 | `API_PASS` | `admin` |
 | `JOBS` | same as `-p` (`8`) |
+| `E2E_MINT_CMD` | `docker compose run --rm -T web python manage.py mint_token` -- how the fill cases mint staff tokens; the server must hold the same `AUTH_DEV_SIGNING_KEY` as `.env.local` |
 
 ```bash
 BASE_URL=https://staging.example.com API_PASS=hunter2 ./e2e/run.sh
@@ -131,7 +132,7 @@ Across the top: totals, a text filter over step text, paths and outcomes, a fail
 
 The page loads Tailwind and daisyUI for its components and highlight.js for JSON from a CDN, and defines no components of its own, which keeps `bin/report.py` to markup with no stylesheet to maintain. highlight.js arrives as its ES-module core plus the single JSON grammar — 21 KB rather than the 128 KB of the bundle carrying every common language — and a body is highlighted the first time its disclosure opens, so the page does not parse a megabyte of JSON that nobody has asked to see.
 
-The trade is that **the report needs a network connection to render**; opened offline it is readable but unstyled. `Authorization` headers are replaced with `Basic <user> ‹redacted›`, so the report is safe to attach to a ticket.
+The trade is that **the report needs a network connection to render**; opened offline it is readable but unstyled. `Authorization` headers are replaced with `Basic <user> ‹redacted›` or `Bearer ‹redacted›`, so the report is safe to attach to a ticket.
 
 `junit.xml` carries the same results, one `<testsuite>` per case file and one `<testcase>` per Then, for CI systems and generic viewers (`junit2html`, `xunit-viewer`, and the like). A test's `classname` is its feature and scenario and its `name` is the whole step -- `When POST /patients/ / Then the patient is created` -- so a CI failure list reads on its own, without the report open beside it.
 
@@ -179,7 +180,7 @@ assert_jq_eq '.state' 'OR' "state round-trips"
 
 Write each assertion as the rest of its Then: the keyword and the When above it are already on the line, so `"the address is created"` reads as a step where `"POST /addresses/ creates an address"` would repeat both.
 
-`req METHOD PATH [JSON]` sends an authenticated request and leaves the result in `$STATUS` and `$BODY`; `req_anon` and `req_as USER PASS` are the unauthenticated and explicit-credential versions. `req_staff STAFF_ID METHOD PATH [JSON]` adds the `X-Staff-Id` header, which is how a write names the person performing it -- the fill workflow refuses without one, and the credentials say which client is calling, not who is at the counter. The assertions are `assert_status`, `assert_status_in`, `assert_jq`, `assert_jq_eq`, `assert_eq` and `assert_error_code`. `assert_jq` passes trailing arguments to `jq`, so a value binds safely instead of being spliced into the filter:
+`req METHOD PATH [JSON]` sends an authenticated request and leaves the result in `$STATUS` and `$BODY`; `req_anon` and `req_as USER PASS` are the unauthenticated and explicit-credential versions. `req_staff TOKEN METHOD PATH [JSON]` sends a bearer token instead, which is how a write names the person performing it -- the fill workflow refuses a login where it needs a person. The tokens come from `make_staff_identity PHARMACY_ID ROLE` in `fixtures.sh`, which mints one the way a local developer does (`manage.py mint_token`, signed with the dev key in `.env.local`); the API creates the staff record from the token on its first request. `E2E_MINT_CMD` is the command that mints, by default `docker compose run --rm -T web python manage.py mint_token`; on a host with the project's Python, `E2E_MINT_CMD="uv run python manage.py mint_token"` skips the container. The assertions are `assert_status`, `assert_status_in`, `assert_jq`, `assert_jq_eq`, `assert_eq` and `assert_error_code`. `assert_jq` passes trailing arguments to `jq`, so a value binds safely instead of being spliced into the filter:
 
 ```bash
 assert_jq 'any(.results[]; .id == $id)' "it is listed" --arg id "$ID"

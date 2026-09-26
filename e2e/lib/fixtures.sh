@@ -209,19 +209,47 @@ _make_staff() {
   NEW_ID="$(jqv .id)"
 }
 
+# make_staff_identity PHARMACY_ID ROLE
+#
+# A person who can act: a bearer token for a staff identity employed by the
+# pharmacy, minted the way a local developer does it (`manage.py mint_token`,
+# signed with the dev key in .env.local). The API creates the staff record
+# from the token on its first request, so nothing is POSTed here. Sets
+# NEW_TOKEN, NEW_EMAIL and NEW_LAST_NAME; the record's id is whatever the
+# first response that names the person says, so cases compare on email.
+#
+# E2E_MINT_CMD is the command that mints; the default runs it in the Compose
+# web container. On a host with the project's Python, set it to
+# `uv run python manage.py mint_token`.
+: "${E2E_MINT_CMD:=docker compose run --rm -T web python manage.py mint_token}"
+NEW_TOKEN=""; NEW_EMAIL=""
+make_staff_identity() { given "a ${2:-pharmacist} can sign in" _make_staff_identity "$@"; }
+_make_staff_identity() {
+  local pharmacy="$1" role="${2:-pharmacist}"
+  NEW_LAST_NAME="Staffer-${RUN_TAG}x$(_rand 1000000)"
+  NEW_EMAIL="$(gen_email)"
+  local args=(--email "$NEW_EMAIL" --given-name "Testila" --family-name "$NEW_LAST_NAME"
+              --roles "$role" --pharmacy "$pharmacy")
+  [[ "$role" == "pharmacist" ]] && args+=(--registration OR "$(gen_registration)")
+  NEW_TOKEN="$($E2E_MINT_CMD "${args[@]}" 2>/dev/null | tail -n 1 | tr -d '\r')"
+  [[ "$NEW_TOKEN" == ey* ]] || die "could not mint a token (E2E_MINT_CMD=${E2E_MINT_CMD})"
+}
+
 # The two people the fill workflow needs, and the pharmacy that employs them.
 # A technician starts a fill and only a pharmacist may verify it, so a case
 # that dispenses anything needs both. Sets FX_PHARMACY, FX_PHARMACIST and
-# FX_TECHNICIAN.
-FX_PHARMACIST=""; FX_TECHNICIAN=""
+# FX_TECHNICIAN (their tokens), and FX_PHARMACIST_EMAIL / FX_TECHNICIAN_EMAIL.
+FX_PHARMACIST=""; FX_TECHNICIAN=""; FX_PHARMACIST_EMAIL=""; FX_TECHNICIAN_EMAIL=""
 make_dispensing_team() { given "a pharmacy with a pharmacist and a technician exists" _make_dispensing_team "$@"; }
 _make_dispensing_team() {
   make_pharmacy;                                  FX_PHARMACY="$NEW_ID"
-  make_staff "$FX_PHARMACY";                      FX_PHARMACIST="$NEW_ID"
-  make_staff "$FX_PHARMACY" '{"role":"technician"}'; FX_TECHNICIAN="$NEW_ID"
+  make_staff_identity "$FX_PHARMACY" pharmacist
+  FX_PHARMACIST="$NEW_TOKEN"; FX_PHARMACIST_EMAIL="$NEW_EMAIL"
+  make_staff_identity "$FX_PHARMACY" technician
+  FX_TECHNICIAN="$NEW_TOKEN"; FX_TECHNICIAN_EMAIL="$NEW_EMAIL"
 }
 
-# make_dispensed_fill PRESCRIPTION_ID OPERATOR_ID PHARMACIST_ID [overrides_json]
+# make_dispensed_fill PRESCRIPTION_ID OPERATOR_TOKEN PHARMACIST_TOKEN [overrides_json]
 #
 # One fill all the way to completed: the technician starts it, the pharmacist
 # verifies it, and completing it is what moves the prescription's totals. With

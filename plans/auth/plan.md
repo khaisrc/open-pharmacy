@@ -433,15 +433,16 @@ What was built follows §1–§9. Differences and discoveries:
 - The admin's `Staff` page shows `email`, `source` (logto / manual) and
   makes every field but `is_active` read-only on a Logto-sourced row; the
   service refuses the rest anyway.
-- **The curl-driven `e2e/` suite is not adapted.** Its `req_staff` sends
-  `X-Staff-Id` with Basic credentials to act as a person, which this change
-  retires: starting and verifying a fill now take a bearer token for a
-  staff identity. Making `65_fills.sh` pass again needs either dev tokens
-  from `mint_token` (a `LOGTO_DEV_SIGNING_KEY` in the committed `.env.local`
-  — a throwaway like every value there — so the `web` container can verify
-  them) or tokens from the Compose Logto (users and roles created on the
-  suite's way in through the Management API). That is a decision about the
-  e2e suite, not this plan, and is left open.
+- **The curl-driven `e2e/` suite mints its staff.** `req_staff` sends a
+  bearer token; `make_staff_identity PHARMACY ROLE` gets one from
+  `E2E_MINT_CMD` (default: `manage.py mint_token` in the Compose `web`
+  container), signed with a throwaway `LOGTO_DEV_SIGNING_KEY` now
+  committed in `.env.local`, and the API creates the staff record on the
+  token's first request. The two fill cases compare people by email, and
+  assert the new refusals (403 `staff_identity_required` for a login, 403
+  `insufficient_scope` naming `fills:verify` for a technician). Run here
+  against a dev server on the embedded Postgres with a wasm `jq` shim:
+  745 passed, 0 failed.
 - **Public versus internal endpoint.** Logto writes its public `ENDPOINT`
   into every token's `iss`, and under Compose that is a host port the
   `web` container cannot reach; `LOGTO_INTERNAL_ENDPOINT` (optional) is
