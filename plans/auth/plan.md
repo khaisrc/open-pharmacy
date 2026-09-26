@@ -448,6 +448,19 @@ What was built follows §1–§9. Differences and discoveries:
   `web` container cannot reach; `LOGTO_INTERNAL_ENDPOINT` (optional) is
   where the keys are fetched when it differs, and the issuer stays the
   public URL. The same split serves a deployment behind a proxy.
+- **The console's first admin is seeded** by a one-shot `auth-seed` Compose
+  service running `scripts/create_auth_admin.py` (standard library only,
+  in the `web` image). Logto has no setting for it: its first admin is an
+  ordinary registration in the admin tenant, open only while that tenant
+  has no users, so the script performs that registration over the
+  experience API the Welcome page uses and treats "username already in
+  use" as done. Two Logto facts it works around, both verified here: the
+  admin tenant is selected by the request's `Host` header matching
+  `ADMIN_ENDPOINT` (so the script sends the public host while travelling to
+  the internal address), and the admin tenant's password policy consults
+  api.pwnedpasswords.com unless seeded with `--dapc`, which Compose now
+  passes. Credentials are `AUTH_ADMIN_USERNAME` / `AUTH_ADMIN_PASSWORD` in
+  `.env.local`.
 - Run on the embedded PostgreSQL 16.2: 506 tests pass and 1 skips (the live
   test, off without `LOGTO_LIVE_ENDPOINT`; it passes when pointed at the
   sandbox instance). `ruff check`, `ruff format --check`,

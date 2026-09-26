@@ -43,15 +43,36 @@ same thing against the same Compose stack and attaches that report to the run.
 
 ## The identity server locally
 
-`docker compose up` also starts the identity server, the `auth` service
-(Logto), against a second database on the same Postgres: the console on
+The identity server, the `auth` service (Logto), sits behind the `auth`
+Compose profile, so a plain `docker compose up` leaves it out. `make run`
+turns the profile on, and `NO_AUTH=1` turns it back off:
+
+```bash
+docker compose --profile auth up    # or: make run
+docker compose up                   # or: make run NO_AUTH=1
+```
+
+The API does not need it to start. It fetches the provider's keys on the
+first request that presents a provider token, and a token from
+`manage.py mint_token` is verified against `AUTH_DEV_SIGNING_KEY` without any
+fetch at all -- which is how the unit tests, the e2e suite and CI work. Start
+the profile when you want the console, or to sign in against the real
+provider.
+
+It runs against a second database on the same Postgres: the console on
 `http://localhost:8442`, tokens from `http://localhost:8441`. Both host
 ports come from the shell (`AUTH_PORT`, `AUTH_CONSOLE_PORT`) like
 `WEB_PORT`; `AUTH_ISSUER` in `.env.local` must name the same port as
-`AUTH_PORT`, since the provider writes it into every token's issuer. First
-boot: open the console, create the admin, then configure it as
-[identity-providers/logto.md](identity-providers/logto.md) describes. For
-curl without a UI, mint a token the API accepts locally:
+`AUTH_PORT`, since the provider writes it into every token's issuer.
+
+The one-shot `auth-seed` service creates the console's first admin from
+`AUTH_ADMIN_USERNAME` / `AUTH_ADMIN_PASSWORD` in `.env.local` (`admin` /
+`Passw0rd!`), the way the Welcome page would, so there is a login
+on first boot; a re-run finds it and does nothing. Logto opens that
+registration only until an admin exists, so to change the username, drop
+the `auth` database (`docker compose down -v`). First boot: open the console,
+sign in as the seeded admin, then configure it as
+[identity-providers/logto.md](identity-providers/logto.md) describes. For curl without a UI, mint a token the API accepts locally:
 
 ```bash
 docker compose run --rm web python manage.py mint_token --generate-key   # once; paste into .env.local

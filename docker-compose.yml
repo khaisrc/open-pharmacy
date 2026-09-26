@@ -39,16 +39,34 @@ services:
   # serves the console on 3002; the API verifies tokens against 3001.
   # Configure it as docs/deployment.md describes (resource, scopes, roles,
   # customizer).
+  #
+  # Behind the `auth` profile, so a plain `docker compose up` leaves it out:
+  #   docker compose --profile auth up
+  # The API does not need it to start. It fetches the provider's keys on the
+  # first request that presents a provider token, and a token from
+  # `manage.py mint_token` is verified against AUTH_DEV_SIGNING_KEY without
+  # any fetch at all -- which is how the tests and the e2e suite work. Start
+  # this when you want the console, or to sign in against the real provider.
   auth:
     image: svhd/logto:1.43
+    profiles: ["auth"]
     depends_on:
       db:
         condition: service_healthy
-    entrypoint: ["sh", "-c", "npm run cli db seed -- --swe && npm start"]
-    # The public URLs: what a browser reaches, and what Logto writes into a
-    # token's issuer. The API fetches keys over the Compose network instead
-    # (LOGTO_INTERNAL_ENDPOINT in .env.local), so the host ports are free to
-    # be whatever is not taken.
+    # --dapc: the admin tenant's password policy otherwise consults
+    # api.pwnedpasswords.com, which an offline host cannot reach, and the
+    # first admin could never be created.
+    entrypoint: ["sh", "-c", "npm run cli db seed -- --swe --dapc && npm start"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/status').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    # The public URLs: what a browser reaches, and what the provider writes
+    # into a token's issuer. The API fetches keys over the Compose network
+    # instead (AUTH_INTERNAL_URL in .env.local), so the host ports are free
+    # to be whatever is not taken.
     environment:
       TRUST_PROXY_HEADER: 1
       DB_URL: postgres://pharmacy:pharmacy@db:5432/auth
@@ -58,14 +76,29 @@ services:
       - "${AUTH_PORT:-8441}:3001"
       - "${AUTH_CONSOLE_PORT:-8442}:3002"
 
+  # One-shot: creates the identity server's first admin from
+  # AUTH_ADMIN_USERNAME / AUTH_ADMIN_PASSWORD in .env.local, so a fresh stack
+  # has a console login without the Welcome page. Idempotent, like migrate.
+  auth-seed:
+    build: .
+    env_file: .env.local
+    profiles: ["auth"]
+    depends_on:
+      auth:
+        condition: service_healthy
+    environment:
+      ADMIN_ENDPOINT: http://localhost:${AUTH_CONSOLE_PORT:-8442}
+      AUTH_INTERNAL_ADMIN_ENDPOINT: http://auth:3002
+    volumes:
+      - .:/app
+    command: ["python", "scripts/create_auth_admin.py"]
+
   web:
     build: .
     env_file: .env.local
     depends_on:
       migrate:
         condition: service_completed_successfully
-      auth:
-        condition: service_started
     ports:
       # Interpolated by Compose from the shell, not from .env.local:
       #   WEB_PORT=9000 docker compose up
