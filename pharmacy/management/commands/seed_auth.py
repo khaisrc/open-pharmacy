@@ -64,20 +64,23 @@ UI_REDIRECT = "http://localhost:3000/callback"
 # <given>.<family>@open-pharmacy.local -- the username with its underscore
 # as a dot, since Logto usernames allow no dots.
 # docs/identity-providers/test-users.md lists them; a test keeps the two in
-# step.
+# step. Their registrations and certifications are their own, none of
+# seed_local's: a token whose registration an active row already holds
+# retires that row as its predecessor, so a shared number would quietly
+# deactivate the demo pharmacist the first time Elena signed in.
 TEST_PASSWORD = "Passw0rd!"
 TEST_USERS = [
     # username, given name, family name, roles, registration, certification, supervisor
-    ("elena_ortiz", "Elena", "Ortiz", ["pharmacist"], ("NY", "RPH.023417"), None, None),
-    ("brendan_walsh", "Brendan", "Walsh", ["pharmacist"], ("NY", "RPH.031205"), None, None),
+    ("elena_ortiz", "Elena", "Ortiz", ["pharmacist"], ("NY", "RPH.140001"), None, None),
+    ("brendan_walsh", "Brendan", "Walsh", ["pharmacist"], ("NY", "RPH.140002"), None, None),
     *[
         (u, g, f, ["certified_technician"], ("NY", r), ("PTCB", n), None)
         for u, g, f, r, n in [
-            ("soojin_kim", "Soo-jin", "Kim", "RPT.118902", "10021987"),
-            ("marcus_bell", "Marcus", "Bell", "RPT.118903", "10021988"),
-            ("priya_natarajan", "Priya", "Natarajan", "RPT.118904", "10021989"),
-            ("tomas_reyes", "Tomás", "Reyes", "RPT.118905", "10021990"),
-            ("hannah_oconnell", "Hannah", "O'Connell", "RPT.118906", "10021991"),
+            ("soojin_kim", "Soo-jin", "Kim", "RPT.240001", "20240001"),
+            ("marcus_bell", "Marcus", "Bell", "RPT.240002", "20240002"),
+            ("priya_natarajan", "Priya", "Natarajan", "RPT.240003", "20240003"),
+            ("tomas_reyes", "Tomás", "Reyes", "RPT.240004", "20240004"),
+            ("hannah_oconnell", "Hannah", "O'Connell", "RPT.240005", "20240005"),
         ]
     ],
     *[

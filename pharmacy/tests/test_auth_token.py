@@ -12,7 +12,7 @@ from pharmacy.auth.providers.logto import LogtoProvider
 from pharmacy.auth.scopes import ROLE_SCOPES, TECHNICIAN_SCOPES, Scope
 from pharmacy.auth.verifier import TokenVerifier, key_set_from
 
-from .test_seed_auth import fake_logto, seed  # noqa: F401  (the fixture, by name)
+from .test_seed_auth import seed
 from .test_settings_and_seed import environment
 
 pytestmark = pytest.mark.django_db

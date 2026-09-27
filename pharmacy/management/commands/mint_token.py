@@ -9,7 +9,7 @@ no other settings module makes it.
 
     python manage.py mint_token --generate-key        # once; paste into .env.local
     python manage.py mint_token --email rph@example.local --roles pharmacist \\
-        --pharmacy <pharmacy uuid> --registration NY RPH.023417
+        --pharmacy <pharmacy uuid> --registration NY RPH.900001
 """
 
 import os

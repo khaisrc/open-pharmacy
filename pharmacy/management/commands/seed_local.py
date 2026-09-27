@@ -209,8 +209,11 @@ class Command(BaseCommand):
             "corner_tech": (StaffRole.TECHNICIAN, "", "", "", "", "", corner),
         }.items():
             first, last = fake.first_name(), fake.last_name()
+            # Among active rows only: a token identity that took a
+            # registration over (its successor rule) leaves the old row
+            # inactive beside it, and both would match otherwise.
             lookup = (
-                {"registration_state": state, "registration_number": number}
+                {"registration_state": state, "registration_number": number, "is_active": True}
                 if number
                 else {"first_name": first, "last_name": last, "pharmacy": pharm}
             )

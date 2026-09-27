@@ -62,10 +62,8 @@ class Command(BaseCommand):
                 "docs/identity-providers/test-users.md (run `seed_auth` to create them)."
             )
         user = found[0]
-        app = next(
-            (a for a in logto.api("GET", "/applications", token=token) if a["name"] == UI_APPLICATION),
-            None,
-        )
+        apps = logto.api("GET", "/applications", token=token)
+        app = next((a for a in apps if a["name"] == UI_APPLICATION), None)
         if app is None:
             raise CommandError(f"no {UI_APPLICATION!r} application; run `seed_auth` first.")
 
