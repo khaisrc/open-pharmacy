@@ -17,8 +17,11 @@ identity claims contract directly, so the adapter maps nothing.
 
 ## Configuring the instance
 
-In the console (or through the Management API), under the tenant the API
-trusts:
+Locally, `manage.py seed_auth` (the `auth-seed` Compose service) does all of
+this, idempotently, on every boot -- plus the UI application and the
+[test users](test-users.md), whose tokens it checks against the API's own
+reading. Elsewhere it is done once in the console
+or through the Management API, under the tenant the API trusts:
 
 1. **An API resource** whose indicator is `AUTH_AUDIENCE`, token TTL 900 s,
    with every scope in `pharmacy/auth/scopes.py` created on it by name.
@@ -43,6 +46,8 @@ trusts:
        pharmacy_id: user.customData?.pharmacy_id,
        registration_state: user.customData?.registration_state,
        registration_number: user.customData?.registration_number,
+       certification_body: user.customData?.certification_body,
+       certification_number: user.customData?.certification_number,
        supervising_user_id: user.customData?.supervising_user_id,
      };
    };
@@ -50,10 +55,13 @@ trusts:
    Logto issues a token even when the customizer throws, so the API, not
    Logto, refuses a token without `email` (401 `token_without_email`).
 5. **Users**: primary email, given and family name, one or more roles, and
-   `custom_data` `{pharmacy_id, registration_state, registration_number}`
-   (`pharmacy_id` is this API's UUID for the employer; not needed for an
-   admin-only user; `supervising_user_id` -- the supervisor's Logto user id,
-   shown in the console's user list -- for an intern).
+   `custom_data` `{pharmacy_id, registration_state, registration_number,
+   certification_body, certification_number, supervising_user_id}` as the
+   role needs them (`pharmacy_id` is this API's UUID for the employer, not
+   needed for an admin-only user; the registration for a pharmacist or
+   certified technician; the PTCB/NHA certification for a certified
+   technician; `supervising_user_id` -- the supervisor's Logto user id --
+   for an intern).
 
 ## Changing a person's details
 
@@ -69,13 +77,18 @@ first request creates the successor record and retires the old one.
 
 `docker compose --profile auth up` runs Logto as the `auth` service (the
 profile keeps it out of the default stack, which the API does not need it
-for), seeded with `--dapc`
-(the admin tenant's password policy otherwise consults
-api.pwnedpasswords.com, which an offline host cannot reach), with its
-console on `http://127.0.0.1:8442` (127.0.0.1 rather than localhost: see
+for), seeded with `--dapc` (the admin tenant's password policy otherwise
+consults api.pwnedpasswords.com, which an offline host cannot reach), with
+its console on `http://127.0.0.1:8442` (127.0.0.1 rather than localhost: see
 [../development.md](../development.md), Logto blocks a `localhost` origin
-on its management API) and the first admin created by the
-one-shot `auth-seed` service from `AUTH_ADMIN_USERNAME` /
-`AUTH_ADMIN_PASSWORD` in `.env.local`. Logto selects the admin tenant by the
-request's `Host` header matching `ADMIN_ENDPOINT`, which is why that seed
+on its management API). The one-shot `auth-seed` service then runs
+`manage.py seed_auth`: it creates the console's first admin from
+`AUTH_ADMIN_USERNAME` / `AUTH_ADMIN_PASSWORD` in `.env.local` (the Welcome
+page's registration, over the same experience API), signs that admin in the
+way the console does to obtain a Management API token, and ensures the
+resource, scopes, roles and customizer above, the UI application and the
+[test users](test-users.md). Logto selects the admin tenant by the
+request's `Host` header matching `ADMIN_ENDPOINT`, which is why the seed
 sends the public host while travelling to the internal address.
+Registration of the first admin closes once one exists, so to change the
+username, drop the `auth` database (`docker compose --profile auth down -v`).

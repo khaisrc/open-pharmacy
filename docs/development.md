@@ -7,7 +7,7 @@ Compose. `docker compose run --rm web …` starts the database, runs the one-sho
 ```bash
 docker compose up                       # serve, with migrations and seed
 docker compose up --build               # after changing dependencies
-docker compose down -v                  # stop and drop the database
+docker compose --profile auth down -v   # stop everything and drop the database
 docker compose logs -f web
 
 docker compose run --rm web pytest
@@ -44,12 +44,13 @@ same thing against the same Compose stack and attaches that report to the run.
 ## The identity server locally
 
 The identity server, the `auth` service (Logto), sits behind the `auth`
-Compose profile, so a plain `docker compose up` leaves it out. `make run`
+Compose profile, so a plain `docker compose up` leaves it out. `make start`
 turns the profile on, and `NO_AUTH=1` turns it back off:
 
 ```bash
-docker compose --profile auth up    # or: make run
-docker compose up                   # or: make run NO_AUTH=1
+docker compose --profile auth up    # or: make start
+docker compose up                   # or: make start NO_AUTH=1
+docker compose --profile auth stop  # or: make stop; keeps the database and Logto's state
 ```
 
 The API does not need it to start. It fetches the provider's keys on the
@@ -79,14 +80,24 @@ console:
     Access to fetch at 'http://localhost:8441/api/users' from origin
     'http://localhost:8442' has been blocked by CORS policy
 
-The one-shot `auth-seed` service creates the console's first admin from
-`AUTH_ADMIN_USERNAME` / `AUTH_ADMIN_PASSWORD` in `.env.local` (`admin` /
-`Passw0rd!`), the way the Welcome page would, so there is a login
-on first boot; a re-run finds it and does nothing. Logto opens that
-registration only until an admin exists, so to change the username, drop
-the `auth` database (`docker compose down -v`). First boot: open the console,
-sign in as the seeded admin, then configure it as
-[identity-providers/logto.md](identity-providers/logto.md) describes. For curl without a UI, mint a token the API accepts locally:
+The one-shot `auth-seed` service (`manage.py seed_auth`) creates the
+console's first admin from `AUTH_ADMIN_USERNAME` / `AUTH_ADMIN_PASSWORD` in
+`.env.local` (`admin` / `Passw0rd!`), configures the provider for this API
+-- the resource, its scopes, the roles, the token customizer, the UI
+application -- and creates the [test users](identity-providers/test-users.md)
+(two pharmacists, five certified technicians, five technicians, two interns,
+two admins; all `Passw0rd!`), checking each one's token the way the API
+reads it. A re-run finds everything and changes nothing. Logto opens the
+first admin's registration only until an admin exists, so to change the
+username, drop the `auth` database (`docker compose --profile auth down -v`; without the
+profile, `down` leaves the running `auth` container behind). First boot:
+open the console and sign in as the seeded admin to create users; the rest
+is already configured ([identity-providers/logto.md](identity-providers/logto.md)).
+For curl as one of the seeded users, ask the provider for their token
+(`make -s token AS=elena_ortiz`; see
+[identity-providers/test-users.md](identity-providers/test-users.md#getting-a-token)).
+For an identity of your own, without the provider, mint a token the API
+accepts locally:
 
 ```bash
 docker compose run --rm web python manage.py mint_token --generate-key   # once; paste into .env.local

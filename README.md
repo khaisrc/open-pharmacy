@@ -50,8 +50,9 @@ The identity server is not part of that default stack -- the API serves
 without it. Add it when you want the console or a real sign-in:
 
 ```bash
-docker compose --profile auth up                 # or: make run
-open http://127.0.0.1:8442/console/              # identity server console, admin / Passw0rd!
+docker compose --profile auth up                 # or: make start
+open http://127.0.0.1:8442/console/              # identity provider console, admin / Passw0rd!
+                                                 # API users to sign in as: docs/identity-providers/test-users.md
 ```
 
 Port 8000 taken? Set `WEB_PORT` in the shell (Compose reads the port mapping

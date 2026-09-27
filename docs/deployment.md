@@ -52,8 +52,8 @@ Users are created at the identity provider, sign in through the UI, and the
 UI sends the access token on every request. The API verifies the token
 against the provider's published keys and reads the **identity claims
 contract** out of it (`pharmacy/auth/claims.py`): `sub`, `email`, the OIDC
-profile names, `roles`, `scope`, `pharmacy_id`, the board registration, and
-`supervising_user_id` for an intern. Nothing in the service knows which
+profile names, `roles`, `scope`, `pharmacy_id`, the board registration, the
+technician certification, and `supervising_user_id` for an intern. Nothing in the service knows which
 product is behind that; an adapter in `pharmacy/auth/providers/` knows
 where the provider publishes its keys and how its native claims map onto
 the contract. `AUTH_PROVIDER` names the adapter; `AUTH_ISSUER` and
@@ -80,7 +80,7 @@ Signing keys rotate at the provider without a redeploy: the API refreshes
 its cached key set on an unknown key id.
 
 Adapters and their configuration: [Logto](identity-providers/logto.md)
-(the default). Adding another is a subclass of `OIDCProvider` that
+(the default; locally `manage.py seed_auth` configures it). Adding another is a subclass of `OIDCProvider` that
 overrides `claims()` where the native layout differs, plus a page like
 Logto's.
 

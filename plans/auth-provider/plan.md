@@ -169,7 +169,7 @@ Logto adapter pinning `{issuer}/jwks` as a fallback). Differences:
   scope names as strings** (an `Enum` leaked into `details` before).
 - The Logto-shaped names that remain are where §3 said they would be:
   `providers/logto.py`, `tests/providers/test_logto_live.py`,
-  `scripts/create_auth_admin.py`, the `auth` Compose service's image and
+  `management/commands/seed_auth.py`, the `auth` Compose service's image and
   comments, `docs/identity-providers/logto.md`, the two plans, and the
   `.env.example` hints that show Logto's issuer shape as an example.
 - **Verified**: the customizer on the sandbox Logto was re-applied with the

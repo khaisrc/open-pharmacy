@@ -20,7 +20,7 @@ docker compose run --rm web python manage.py makemigrations
 docker compose run --rm web python manage.py makemigrations --check --dry-run
 docker compose run --rm web python manage.py spectacular --fail-on-warn
 docker compose up --build        # after changing dependencies
-docker compose down -v           # stop and drop the database
+docker compose --profile auth down -v   # stop everything (auth included) and drop the database
 ```
 
 Do not run `ruff` or `manage.py` from the host `.venv`; the venv is not the

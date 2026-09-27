@@ -1,474 +1,381 @@
-# Users via Logto: JWT bearer auth, scopes, and Staff as the identity record
+# Authentication: bearer tokens, scopes, and Staff as the identity record
 
-Status: **implemented** (see "Implementation notes" at the end for what
-differs from or was not in the text).
+Status: **implemented**.
 
-The identity server is Logto. Builds on `plans/rx-tx-fills/` (the service
-layer, `WriteContext`, the change history, the fill workflow).
+Builds on `plans/rx-tx-fills/` (the service layer, `WriteContext`, the
+change history, the fill workflow) and `plans/rx-tx-staff/` (the `Staff`
+model).
 
-## 0. What was verified, on a running Logto
+## 1. Scope
 
-### 0.1 Results
+Every API request carries an access token issued by an identity provider.
+The service verifies it against the provider's published keys, reads a
+provider-neutral set of claims out of it, and treats the token's subject
+as the person acting: the first token from a subject creates that person's
+`Staff` record, later tokens must describe the same person, and what a
+token may do is its scopes. The identity provider is Logto, behind an
+adapter; nothing outside that adapter knows it.
 
-| # | Checked | Result |
-|---|---|---|
-| 1 | Logto from npm | `@logto/cli` installs, but `logto init` only downloads the server from GitHub releases, which is unreachable here. **The tarball is what made this possible.** On your machine, Docker (`svhd/logto`) or the CLI both work. |
-| 2 | Requirements | Node 22 (`^22.14.0` in its `package.json`), PostgreSQL 14+ with its own database, Redis optional. The driver (slonik) needs a TCP `DB_URL`; a Unix-socket URL is rejected. |
-| 3 | Discovery | `GET {ENDPOINT}/oidc/.well-known/openid-configuration`: `issuer = http://localhost:3001/oidc`, `jwks_uri = …/oidc/jwks`, `token_endpoint = …/oidc/token`, signing alg **`ES384`** (one EC P-384 key on a fresh install; RS256 only if rotated to RSA). |
-| 4 | A real user token | Obtained without a browser (Management API → subject token → token exchange, §0.2). Header `{"alg":"ES384","typ":"at+jwt","kid":…}`; claims `iss`, `aud` = the resource indicator, `sub` = user id, `scope` space-separated, `client_id`, `jti`, `iat`, `exp` (= resource TTL, 900 s). |
-| 5 | Verified with PyJWT | `PyJWKClient("…/oidc/jwks")` + `jwt.decode(algorithms=["ES384","RS256"], issuer=…, audience=…)` against the **live** JWKS: accepted, claims below. This is the exact code path §2 builds. |
-| 6 | Custom claims | With the customizer in §4, the access token carries `email`, `email_verified`, `name`, `given_name`, `family_name`, `address` (OIDC-shaped object: `formatted`, `street_address`, `locality`, `region`, `postal_code`, `country`), `registration_state`, `registration_number`. Verbatim from the verified token: `"name": "Elena Ortiz"`, `"address": {"formatted": "18 Hillcrest Ave, Ithaca, NY 14850", …}`, `"registration_number": "RPH.023417"`. |
-| 7 | A user with no primary email | The customizer `throw`s and `blockIssuanceOnError` is `true`, yet **a token is still issued**, with no custom claims at all (`email` absent). No error in Logto's log. So the API must refuse a token without `email` itself (401 `token_without_email`); it cannot rely on Logto to withhold one. |
-| 8 | Scopes are capped by role | A `technician` (read + write) asking for `fills:verify` receives `scope = "prescriptions:read prescriptions:write"` — the extra scope is silently dropped, not an error. The API's `HasScope` is what turns that into a 403. |
-| 9 | Python packages | `PyJWT[crypto]` 2.13 and `cryptography` 50 install from PyPI here. The `logto` PyPI package is a web-session SDK; not used. |
-| 10 | `sub` stability | Changed the user's email, name and `custom_data` registration through the Management API and minted a new token: `sub` unchanged (`ndr2k9q0pvqk` before and after). `sub` is Logto's `users.id`, assigned at creation; only deleting and recreating the user yields a new one. |
-| 11 | Deactivation by suffix | `PATCH /api/users/{id}` to `marco.diaz@example.local-DEACTIVATED` is accepted (frees the real address for the new user) and `PATCH …/is-suspended {true}` makes token issuance fail with `invalid_grant`. The suffix alone does not stop sign-in; suspend as well. |
-| 12 | Batch lookup | `GET /api/users?search.id=a&search.id=b&mode=exact&joint=or` resolves several ids in one call — noted for completeness; this plan does not call the Management API from the service. |
+Out of scope: single sign-on for the Django admin (it keeps Django
+sessions), an API over the change history, and any link between
+`auth.User` and `Staff`.
 
-### 0.2 Runbook (how it is running here; reusable for Compose)
+## 2. The identity model
+
+### 2.1 The claims contract
+
+`pharmacy/auth/claims.py` names what a verified token must say. It is the
+API's vocabulary for who is acting, independent of the provider:
+
+| Claim | Meaning |
+|---|---|
+| `sub` | the external user id; immutable for the user's life |
+| `email` | required |
+| `name`, `given_name`, `family_name` | standard OIDC profile |
+| `roles` | list of `StaffRole` names |
+| `scope` | space-separated scopes (RFC 9068) |
+| `pharmacy_id` | the employer, a Pharmacy UUID; absent for an admin |
+| `registration_state`, `registration_number` | the board registration |
+| `certification_body`, `certification_number` | the national technician certification (PTCB / NHA) |
+| `supervising_user_id` | an intern's supervisor, by external user id |
+
+`Principal.from_claims` reads only these names. A provider adapter is what
+turns a provider's native claim layout into them.
+
+### 2.2 Provider adapters
+
+`pharmacy/auth/providers/`:
 
 ```text
-# PostgreSQL 16 from the pgserver wheel, on TCP because slonik wants a host:port
-pg_ctl -D /tmp/logto-run/pgdata -o '-h 127.0.0.1' -o '-p 54329' start ; psql -c 'CREATE DATABASE logto'
-# seed (creates the default + admin tenants, OIDC keys, sign-in experience)
-cd /tmp/logto && DB_URL=postgres://postgres@127.0.0.1:54329/logto node packages/cli/lib/index.js db seed --swe
-# run
-cd packages/core && DB_URL=… ENDPOINT=http://localhost:3001 ADMIN_ENDPOINT=http://localhost:3002 \
-  NODE_ENV=production TRUST_PROXY_HEADER=1 node .
+class IdentityProvider:
+    issuer: str                       # the `iss` to require
+    audience: str                     # the `aud` to require
+    algorithms: ("ES384", "RS256")    # the allow-list; never `none`, never symmetric
+    internal_url: str | None          # where this service reaches the provider, if not the issuer
+    def jwks_uri(self) -> str
+    def claims(self, raw: dict) -> dict   # native claims -> the contract
 ```
 
-Management API without a browser (sandbox only — on your machine the
-console's Welcome page creates the admin and an M2M app the normal way):
-one `INSERT` of a machine-to-machine application in the `default` tenant
-plus a row in `applications_roles` for the seeded "Logto Management API
-access" role, then `POST /oidc/token` with `grant_type=client_credentials`
-and `resource=https://default.logto.app/api`. From there, everything in §4
-was done through `POST /api/resources`, `/api/resources/{id}/scopes`,
-`/api/roles`, `/api/users`, `/api/users/{id}/roles`,
-`PUT /api/configs/jwt-customizer/access-token`. A user token without a
-sign-in flow: set `customClientMetadata.allowTokenExchange` on the SPA app,
-`POST /api/subject-tokens {"userId"}`, then `POST /oidc/token` with
-`grant_type=urn:ietf:params:oauth:grant-type:token-exchange`. That is also
-how the integration test in §7 will mint tokens.
+- `OIDCProvider` — the generic adapter. `jwks_uri()` comes from
+  `{issuer}/.well-known/openid-configuration`, fetched once per process;
+  `claims()` is the identity mapping, for a provider configured to emit the
+  contract directly. With `internal_url` set, discovery and the keys are
+  fetched there while the issuer stays the public URL a token carries (the
+  Compose network; a private subnet behind a proxy). An unreachable
+  provider raises `DiscoveryUnavailable`, reported as a 503, because the
+  token was not judged.
+- `LogtoProvider` — the default: `OIDCProvider` plus a fallback to
+  `{issuer}/jwks`, Logto's documented key path, if discovery is down. It
+  inherits `claims()` unchanged because Logto's JWT customizer (§8) emits
+  the contract. **This file is the only code that knows anything about
+  Logto.**
+- A provider with its own layout — Keycloak's `realm_access.roles`, Auth0's
+  namespaced claims — is a subclass that overrides `claims()`, under forty
+  lines, plus a page under `docs/identity-providers/`.
 
-Logto is still running here (core on :3001, admin on :3002, the database
-on :54329) with the resource, scopes, roles, customizer and three users
-from §0.1 in place.
+`AUTH_PROVIDER` (a dotted path) chooses the adapter; `get_provider()` builds
+it once from `AUTH_ISSUER`, `AUTH_AUDIENCE` and `AUTH_INTERNAL_URL`.
 
-## 1. What changes
+### 2.3 Verification and the principal
 
-Today: HTTP Basic against `auth.User`; a fill names the person acting
-through an `X-Staff-Id` header, a FK to `Staff`, whose rows are typed in
-through `/pharmacies/{id}/staff/`; the history records `changed_by_user`
-(FK `auth.User`) and `changed_by_staff`.
+- `TokenVerifier` (`pharmacy/auth/verifier.py`): `PyJWKClient(provider.jwks_uri())`,
+  built lazily so discovery happens on the first token; `jwt.decode` with
+  the adapter's algorithms, issuer and audience, 60 s leeway, and `exp`,
+  `iat`, `sub`, `aud`, `iss` required. An unknown `kid` triggers one JWKS
+  refresh, so a key rotation at the provider needs no redeploy. `key_set=`
+  is the tests' seam: an in-memory `PyJWKSet` instead of a fetch. A token
+  whose `kid` is the dev kid is checked against `AUTH_DEV_SIGNING_KEY`'s
+  public half when local sets one (§7).
+- `Principal` (`principal.py`): frozen — `external_user_id`, `email`,
+  `name`, `given_name`, `family_name`, `roles`, `pharmacy_id`,
+  `registration_state`, `registration_number`, `certification_body`,
+  `certification_number`, `supervising_external_user_id`, `scopes`,
+  `staff`, `django_user`.
+  `role` is the highest of `roles` by `ROLE_PRECEDENCE`
+  (`admin > pharmacist > certified_technician > technician > intern`, in
+  `models/staff.py`). `pk` is the subject, so DRF's throttle buckets per
+  identity.
+- `BearerTokenAuthentication` (`authentication.py`): reads the bearer
+  header, verifies, maps the claims through the adapter, builds the
+  principal, refuses a token without `email`, and resolves the `Staff` row
+  (§4.2). First in `DEFAULT_AUTHENTICATION_CLASSES`; a request without a
+  bearer header falls through to Basic or session (§5). Failure codes,
+  rendered in the one error envelope: `token_missing`, `token_invalid`,
+  `token_expired`, `token_without_email`, `identity_incomplete`,
+  `identity_changed`, `supervisor_required`; `identity_unavailable` (503).
+- `BearerScheme` (`schema.py`) describes the scheme to drf-spectacular.
 
-After:
+Settings: `AUTH_PROVIDER`, `AUTH_ISSUER`, `AUTH_INTERNAL_URL`,
+`AUTH_AUDIENCE`, and local-only `AUTH_DEV_SIGNING_KEY`. uat and prod
+require issuer and audience through `require_settings`.
 
-- The API accepts `Authorization: Bearer <Logto access token>` on every
-  endpoint (or, during the transition, Basic/session as today). A token is
-  verified against Logto's JWKS and yields a `Principal`: `external_user_id`, email,
-  name, role, pharmacy, registration, scopes — all from the claims, no
-  lookup.
-- **`Staff` becomes the identity record.** A token's first appearance
-  inserts a `Staff` row carrying `external_user_id` (the Logto subject)
-  and what the token says; the row is never updated from a token again; a
-  later token for the same `external_user_id` with a different identity is
-  refused. Every record that names a person keeps pointing at **`Staff.id`**,
-  the UUID row id, exactly as it does now; `external_user_id` is only how the
-  row is found for a token. `X-Staff-Id` is gone: the person is whoever the
-  token is for.
-- **Scopes replace the role check.** "Only a pharmacist can verify" becomes
-  "only a token with `fills:verify`"; Logto roles grant scopes (§2.1).
-- The Django admin keeps session login; its writes and Basic-authenticated
-  writes are attributed to the Django user (§5).
+## 3. Scopes and roles
 
-## 2. Token verification and the principal
-
-`pharmacy/auth/` (new package):
-
-- `verifier.py` — `LogtoTokenVerifier`: `PyJWKClient(f"{LOGTO_ENDPOINT}/oidc/jwks", cache_keys=True)`;
-  `jwt.decode(token, key, algorithms=["ES384", "RS256"], issuer=f"{LOGTO_ENDPOINT}/oidc", audience=LOGTO_API_RESOURCE, leeway=60, options={"require": ["exp", "iat", "sub", "aud", "iss"]})`.
-  `alg: none` and symmetric algorithms are excluded by the allow-list. An
-  unknown `kid` triggers one JWKS refresh (PyJWKClient), so key rotation
-  needs no redeploy. JWKS unreachable is a 503 `identity_unavailable`, not a
-  401: the token was not judged. Verified against the live instance (§0.1
-  item 5).
-- `principal.py` — frozen `Principal(external_user_id, email, name, given_name, family_name, roles, role, pharmacy_id, registration_state, registration_number, supervising_external_user_id, scopes, staff)`.
-  `external_user_id = claims["sub"]`, read in exactly this one place.
-  `roles` is the token's list; `role` is the highest by
-  `ROLE_PRECEDENCE = [admin, pharmacist, certified_technician, technician, intern]`
-  in `pharmacy/models/staff.py`, next to `StaffRole`. `is_authenticated = True`; `has(scope)`.
-- `authentication.py` — DRF `LogtoJWTAuthentication`: reads the bearer
-  header, verifies, builds the principal, then **resolves or creates the
-  `Staff` row** (§3) and attaches it. Failure codes, rendered by the existing
-  exception handler: `token_missing`, `token_invalid`, `token_expired`,
-  `token_without_email`, `identity_incomplete` (the claims cannot make a
-  valid `Staff` row — e.g. a pharmacist with no registration, a non-admin
-  with no or an unknown `pharmacy_id`, no recognised role),
-  `identity_changed` (the claims differ from the row for this
-  `external_user_id`), `supervisor_required` (§3.4). `WWW-Authenticate: Bearer`.
-- `permissions.py` — `HasScope`: a viewset declares
-  `required_scopes` per action; a principal lacking one is 403
-  `insufficient_scope` with `details.required`. An action with no entry is
-  denied: fail closed.
-- `scopes.py` — the table below, the single definition the viewsets and the
-  docs use.
-
-Settings: `LOGTO_ENDPOINT`, `LOGTO_API_RESOURCE`, required in uat/prod
-through `require_settings`, defaulted in `.env.local` to the Compose
-service. `REST_FRAMEWORK` authentication classes:
-`[LogtoJWTAuthentication, BasicAuthentication, SessionAuthentication]`;
-permissions `[IsAuthenticated, HasScope]`.
-
-### 2.1 Scopes and roles
-
+`pharmacy/auth/scopes.py` names every scope once; the same names are
+defined at the provider and granted to its roles. `HasScope` checks a
+viewset's `required_scopes` per action — a principal holding any one of an
+action's scopes passes; an action with no entry fails closed — and refuses
+with 403 `insufficient_scope`, `details.required` naming what was needed.
 `read` covers list, detail and the nested child lists (a nested list needs
-the *child's* read scope); `write` covers create, update, delete and the
-resource's actions. Prescriptions are the one resource where who may change
-a record depends on its state, so they have two update scopes:
+the child's read scope); `write` covers create, update, delete and a
+resource's actions.
 
 | Resource | Scopes |
 |---|---|
-| prescriptions | `prescriptions:read`, `prescriptions:create`, `prescriptions:update` (PATCH, PUT, delete, `cancel/`, always), `prescriptions:update_unfilled` (the same, only while no fill has been started — §2.2) |
-| fills | `fills:read`, `fills:write` (create, PATCH, `unverify/`, `complete/`, `cancel/`), **`fills:verify`** |
+| prescriptions | `prescriptions:read`, `prescriptions:create`, `prescriptions:update` (PATCH, PUT, delete, `cancel/`, always), `prescriptions:update_unfilled` (the same, only while no fill has been started) |
+| fills | `fills:read`, `fills:write` (create, PATCH, `unverify/`, `complete/`, `cancel/`), `fills:verify` |
 | patients | `patients:read`, `patients:write` |
 | prescribers | `prescribers:read`, `prescribers:write` |
 | medications | `medications:read`, `medications:write` |
-| pharmacies | `pharmacies:read`, `pharmacies:write`, **`pharmacies:onboard`** (`rx_number_seed`, `step`) |
+| pharmacies | `pharmacies:read`, `pharmacies:write`, `pharmacies:onboard` (`rx_number_seed`, `step`) |
 | locations | `locations:read`, `locations:write` |
 | addresses | `addresses:read`, `addresses:write` |
 | staff | `staff:read`, `staff:write` |
 
-Twenty-two. Logto roles, named exactly as `StaffRole` values because the
-token's `roles` claim populates `Staff.roles` (§4). A user may hold
-several; Logto grants the union of their scopes, and `Staff.role` is the
-highest by precedence:
+Twenty-two. The roles, named as `StaffRole` values (`ROLE_SCOPES`):
 
 | Role | Scopes |
 |---|---|
-| `admin` | all twenty-two — a superuser, employed by no particular pharmacy |
-| `pharmacist` | all twenty-two: anything on prescriptions, fills, locations, and the rest |
-| `certified_technician`, `technician` | every `:read`; `prescriptions:create`, `prescriptions:update_unfilled`; `fills:write`; `patients:write`; `addresses:write`. **Not** `prescriptions:update`, not `fills:verify`, not `pharmacies:onboard`, not reference-data writes |
-| `intern` | exactly a technician's scopes, **and** the token must carry `supervising_sub` (§3.4) or it is refused |
+| `admin` | all twenty-two; a superuser employed by no particular pharmacy |
+| `pharmacist` | all twenty-two |
+| `certified_technician`, `technician` | every `:read`; `prescriptions:create`, `prescriptions:update_unfilled`; `fills:write`; `patients:write`; `addresses:write` |
+| `intern` | a technician's scopes, and the token must carry `supervising_user_id` (§4.4) |
 
-Deliberately not separate: `delete` (a soft delete, under the update
-scopes) and the change history (no API). Scopes are silently capped by role
-at Logto (§0.1 item 8); `HasScope` is what turns a missing one into a 403.
+A user may hold several roles; the provider grants the union of their
+scopes and caps a token's `scope` at what the roles grant. Deliberately not
+separate: `delete` (a soft delete, under the update scopes) and the change
+history (no API).
 
-### 2.2 The unfilled rule
+**The unfilled rule** is the one state-dependent permission: a principal
+holding `prescriptions:update_unfilled` but not `prescriptions:update` may
+change a prescription only while no fill is `pending`, `verified` or
+`completed` — a cancelled fill does not count. `PrescriptionService.update`,
+`delete` and `cancel` apply it under the prescription's row lock and refuse
+with 403 `insufficient_scope`, `details.required = ["prescriptions:update"]`,
+`details.reason = "a fill has been started"`. It is keyed on the scopes the
+principal holds, never on a role: the API never reasons about roles for
+permissions. `pharmacies:onboard` is enforced the same way in
+`PharmacyService` for `rx_number_seed` and `step`.
 
-`HasScope` lets a prescription update through on either update scope.
-`PrescriptionService.update`, `delete` and `cancel` then apply the one
-state-dependent rule in the system: a principal holding
-`prescriptions:update_unfilled` but not `prescriptions:update` may change a
-prescription only while **no fill has been started** — no `Fill` row that
-is `pending`, `verified` or `completed`; cancelled fills do not count,
-because a cancelled fill means nothing was dispensed or reserved. Past that
-point the write is 403 `insufficient_scope` with
-`details.required = ["prescriptions:update"]` and
-`details.reason = "a fill has been started"`, so the client knows it is the
-state, not the user, that changed. The check runs under the prescription's
-row lock, like every other rule that reads the fills. The rule is keyed on
-the scopes the principal holds, never on its role: the API never reasons
-about roles for permissions.
+## 4. `Staff` as the identity record
 
-## 3. `Staff` as the identity record
+### 4.1 Schema
 
-### 3.1 Schema
-
-| Field | Change |
+| Field | |
 |---|---|
-| `external_user_id` | **New.** `CharField(32)`, nullable, unique among live rows (`uniq_live_staff_external_user_id`). The Logto subject. Null on a row typed in by hand, which is a directory entry that cannot act. |
-| `email` | **New.** `EmailField`, blank for hand-typed rows, unique among live rows when set (`uniq_live_staff_email`). |
-| `first_name`, `last_name` | from `given_name` / `family_name`; `middle_name`, `suffix` stay blank unless the token carries them (it does not, today). |
-| `roles` | **New.** `JSONField` list of `StaffRole` values, the token's `roles` claim in full. |
-| `role` | the highest of `roles` by `ROLE_PRECEDENCE`; stays a column because filters, the PIC rule and the registration rule key on it. `StaffRole` gains **`admin`**. |
-| `pharmacy` | **becomes nullable**: from the `pharmacy_id` claim, required for every role except `admin`, refused if it names no live pharmacy. `credential_problems()` gains that rule. |
-| `registration_state`, `registration_number` | from the claims; `credential_problems()` still applies, so a `pharmacist` token without them is `identity_incomplete`. Not required for `admin`. |
-| `uniq_live_staff_registration`, `uniq_live_staff_npi` | condition becomes `deleted IS NULL AND is_active` — so a successor identity can take a registration once the old row is inactive (§3.3). |
-| everything else | unchanged, `Fill` and `FieldChange` FKs included. |
+| `external_user_id` | `CharField(32)`, blank on a hand-typed row, unique among live rows (`uniq_live_staff_external_user_id`). The token's subject. A row without one is a directory entry that can be named but cannot act. |
+| `email` | `EmailField`, unique among live rows when set (`uniq_live_staff_email`). |
+| `roles` | `JSONField`, the token's `roles` in full. |
+| `role` | the highest of `roles` by `ROLE_PRECEDENCE`; a column because filters and the rules key on it. |
+| `pharmacy` | nullable: required for every role but `admin` (`credential_problems()` holds it when asked to). |
+| `registration_state`, `registration_number`, `certification_body`, `certification_number` | `credential_problems()` applies: a `pharmacist` without a registration, or a `certified_technician` without a certification, is `identity_incomplete`. |
+| `uniq_live_staff_registration`, `uniq_live_staff_npi` | over **active** live rows, so a successor identity can hold a registration once the old row is inactive. |
 
-**Other tables reference `Staff.id`, the UUID row id — not
-`external_user_id`.** `Fill.operator_id`, `Fill.verified_by_id`,
-`FieldChange.changed_by_staff_id` and `PharmacyLocation.pharmacist_in_charge_id`
-are unchanged. The external id cannot be an FK target anyway (hand-typed
-rows have none), and nothing would be gained: it is one indexed read per
-request to turn a token into a row, and everything after that is the row.
+Other tables reference `Staff.id`, the UUID row id — `Fill.operator_id`,
+`Fill.verified_by_id`, `FieldChange.changed_by_staff_id`,
+`PharmacyLocation.pharmacist_in_charge_id` — never the external id, which
+is one indexed read per request to turn a token into a row. The
+pharmacist-in-charge rule reads `"pharmacist" in staff.roles`, so an admin
+who is also a pharmacist may be designated.
 
-The pharmacist-in-charge rule reads `"pharmacist" in staff.roles`, so an
-admin who is also a pharmacist can be designated; an admin who is not,
-cannot.
+### 4.2 First sight, then immutability
 
-### 3.2 First sight, then immutability
+`services.staff.identify(principal)`, called by the authentication class on
+every bearer request:
 
-On every authenticated request, after the token verifies:
+1. Find the row for `external_user_id`. If found, compare `email`,
+   `first_name`, `last_name`, `roles`, `pharmacy_id`, the registration and
+   the certification with the claims; any difference is 401
+   `identity_changed` and nothing is written. Identity per subject is
+   immutable by policy — a change of any of those is a new user at the
+   provider — and this comparison is what enforces it, since a provider
+   issues a token for an edited user just the same.
+2. If not found, register: build the row from the claims
+   (`identity_incomplete` if no recognised role, a non-admin without a
+   known `pharmacy_id`, a pharmacist without a registration); deactivate
+   any **active** row holding the same registration or NPI — the successor
+   taking over — then `full_clean()`, insert, and record history for both
+   with `changed_by_staff` = the new row. The row is its own first actor.
+3. A row with `external_user_id` is read-only through the staff API and the
+   admin except `is_active` (409 `identity_managed_externally`).
 
-1. `repositories.staff.find(external_user_id=…)`; if found, compare
-   `email`, `first_name`, `last_name`, `roles`, `pharmacy_id`,
-   `registration_state`, `registration_number` with the claims. Any
-   difference → 401 `identity_changed`, message: "This user's identity
-   changed in Logto; deactivate it and create a new user." Nothing is
-   written. This is what enforces the policy; Logto cannot (§0.1 item 7
-   showed it issues regardless).
-2. If not found: `services.staff.register(ctx, principal)`, in one
-   transaction — `full_clean()` for the credential rules; then, for a
-   registration or NPI the claims carry that an **active row with a
-   different `external_user_id`** holds, that row is set `is_active=False`
-   with a history row whose request path says which token did it (the
-   successor taking over, §3.3); then insert, with one history row per
-   column and `changed_by_staff` = the new row itself. A hand-typed row
-   (no external id) holding the registration is deactivated the same way:
-   it was the directory entry for the same person.
-3. A row with `external_user_id` set is **read-only through
-   `/pharmacies/{id}/staff/` and the admin** (409
-   `identity_managed_by_logto`), except `is_active`, which an admin may set
-   by hand as well.
+### 4.3 Changing a person's details
 
-Logto-suspended users never get a token (§0.1 item 11), so a suspended
-identity cannot act whatever its local row says.
+At the provider: deactivate the old user and create the new one with the
+real email, profile, roles and custom data (Logto's steps are in
+`docs/identity-providers/logto.md`). Nothing to do in the API: the new
+user's first request registers the successor and retires the predecessor
+(§4.2 step 2). An admin may also set `is_active` by hand. The person's
+history is split across two subjects, which is the correct audit answer.
 
-### 3.3 The deactivation procedure (runbook, `docs/staff.md`)
+### 4.4 Interns
 
-To change anything about a person: in Logto, suffix the old user's email
-with `-DEACTIVATED` and suspend it, then create the new user with the real
-email, profile, `custom_data` and roles. Nothing to do in the API: the new
-user's first request registers the successor row and deactivates the old
-one (§3.2 step 2); an admin can also set `is_active` by hand at any time.
-The person's history is split across two `external_user_id`s, which is the
-correct audit answer.
-
-### 3.4 Interns act under supervision — recorded in Logto
-
-An intern's token must carry `supervising_sub`: the Logto subject of the
-pharmacist or technician who supervises them, kept in the intern's
-`custom_data` in Logto. The API checks that a principal whose `role` is
-`intern` carries a non-empty claim (401 `supervisor_required` otherwise)
-and does nothing else with it: who supervised whom, and when that changed,
-is Logto's record (its audit log and the user's `custom_data`), not ours.
-No column on `Fill` or `FieldChange`; the intern's own `Staff` row is what
-the fill and the history name. A non-intern's token may carry the claim; it
-is ignored. The supervisor is not part of the intern's immutable identity,
-so the §3.2 comparison ignores it.
-
-## 4. Logto configuration
-
-1. **API resource**: indicator `LOGTO_API_RESOURCE`, token TTL 900 s.
-   Scopes: the nineteen in §2.1.
-2. **Roles**: `admin`, `pharmacist`, `certified_technician`, `technician`,
-   `intern`, with the scopes in §2.1. A user may hold several.
-3. **Application** for the UI: SPA (PKCE), the API resource and its scopes
-   requested at sign-in; the UI sends the bearer on every request.
-4. **JWT customizer** (access token). The script below is the §0.1 one
-   minus the address, plus `roles` and `pharmacy_id`; `context.user.roles`
-   is available to it (§0, `JwtCustomizerUserContext`):
-   ```text
-   const getCustomJwtClaims = async ({ token, context }) => {
-     const user = context?.user;
-     if (!user) { return {}; }
-     return {
-       email: user.primaryEmail,
-       email_verified: Boolean(user.primaryEmailVerified),
-       name: user.name,
-       given_name: user.profile?.givenName,
-       family_name: user.profile?.familyName,
-       roles: (user.roles ?? []).map((role) => role.name),
-       pharmacy_id: user.customData?.pharmacy_id,
-       registration_state: user.customData?.registration_state,
-       registration_number: user.customData?.registration_number,
-       supervising_user_id: user.customData?.supervising_user_id,
-     };
-   };
-   ```
-   The `roles`, `pharmacy_id` and `supervising_sub` claims are **not yet verified** on the
-   running instance (the address removal is trivial); they are the first
-   thing I check when implementation starts, with the script re-applied.
-   Precedence among roles is applied by the API, not here, so the token
-   says what Logto knows and our code says what it means.
-5. **Users**: created by the admin with primary email, given/family name,
-   one or more roles, and `custom_data` `{pharmacy_id, registration_state,
-   registration_number, supervising_sub}` (`pharmacy_id` not needed for an
-   admin-only user; `supervising_sub` — the supervisor's Logto user id,
-   shown in the console's user list — required for an intern)
-   — the API refuses a token that cannot make a valid `Staff` row, so the
-   console is where completeness is enforced by feedback, and the API is
-   where it is enforced by refusal.
+An intern's token must carry `supervising_user_id`, the subject of a
+supervising pharmacist or technician, kept at the provider. The API checks
+it is present on every request by a principal whose role is `intern` (401
+`supervisor_required`) and stores nothing: who supervised whom, and when
+that changed, is the provider's record. The supervisor is not part of the
+intern's identity, so §4.2's comparison ignores it.
 
 ## 5. Basic Auth, sessions and the admin
 
-Kept for the transition. A Django-authenticated actor (Basic on the API,
-session in the admin) gets a `Principal` with
-`external_user_id = "django:<pk>"`, the user's email, **every scope**, and
-`staff = None`. (A Logto `admin` is different: it has a `Staff` row and can
-do everything, fills included.) Consequences:
-
-- The change history records `changed_by_user` for these and
-  `changed_by_staff` for token actors: exactly one is set (CHECK).
-- Creating or verifying a fill needs a `Staff` row to name, so those two
-  writes require a token principal: a Django actor gets 403
-  `staff_identity_required`. Everything else works as today.
-- The admin's `Staff` page shows `external_user_id`, `email`, `roles` and `source`
-  (derived: `logto` / `manual`) and refuses edits to Logto-sourced rows as
-  §3.2 says.
+A Django-authenticated actor — Basic on the API, a session in the admin —
+becomes a `Principal` with `external_user_id = "django:<pk>"`, the user's
+email, **every scope**, and `staff = None`. The change history records
+`changed_by_user` for these and `changed_by_staff` for token actors
+(exactly one, by CHECK). Starting or verifying a fill names a person, so
+those two writes need a token principal: a Django actor gets 403
+`staff_identity_required`. Everything else works for both. The admin keeps
+Django sessions; `auth.User` stays in the schema and stops meaning anything
+to the API beyond that.
 
 ## 6. Migration
 
-`0010_staff_identity`: add `Staff.external_user_id`, `Staff.email` and
-`Staff.roles` with their partial unique constraints; `admin` in the `role`
-choices; `Staff.pharmacy` nullable; swap the registration and NPI
-constraints' conditions to active rows; make `FieldChange.changed_by_user`
-nullable and add the exactly-one CHECK. Existing dev `Staff` rows get
-`roles = [role]` by `RunPython` (arithmetic on a column that exists) and no
-external id: directory entries. Depends on `0009`.
+`0010_staff_identity`: `external_user_id`, `email`, `roles` and their
+partial unique constraints; `admin` in the `role` choices; `pharmacy`
+nullable; the registration and NPI constraints over active rows;
+`FieldChange.changed_by_user` nullable with the exactly-one CHECK. A
+`RunPython` sets `roles = [role]` on existing rows, and another clears
+`changed_by_user` on history rows that named both a login and a staff
+member, so the CHECK holds on a database that already has history.
 
 ## 7. Local development and tests
 
-**Compose** gains an `auth` service (`svhd/logto:1.43`, published on host
-ports `AUTH_PORT` 8441 and `AUTH_CONSOLE_PORT` 8442 since 3001/3002 are
-taken on the host; `DB_URL=postgres://pharmacy:pharmacy@db:5432/auth`) and
-an init script
-creating the `logto` database on `db`; `web` gets `LOGTO_ENDPOINT` and
-`LOGTO_API_RESOURCE` in `.env.local`. First boot: the console's Welcome
-page, then §4. (Here, the §0.2 runbook is the equivalent and is running.)
+**Compose**: the `auth` service is Logto (`svhd/logto`), behind the `auth`
+profile (`docker compose --profile auth up`; the API starts without it), on
+host ports `AUTH_PORT` 8441 and `AUTH_CONSOLE_PORT` 8442, seeded with
+`--dapc` so the first admin can be created offline, with its own `auth`
+database created by `scripts/create-auth-db.sh`. Its `ADMIN_ENDPOINT` is
+`127.0.0.1`, not `localhost`, because Logto refuses CORS to a `localhost`
+origin in production mode. `.env.local` carries
+`AUTH_ISSUER=http://localhost:8441/oidc` (the public issuer a token
+carries) and `AUTH_INTERNAL_URL=http://auth:3001` (where the API fetches
+keys). The one-shot `auth-seed` service, in the same profile, runs
+`manage.py seed_auth` (§8.3) after `migrate` and once `auth` is healthy.
 
-**Tests** mint their own tokens: `tests/tokens.py` generates an EC P-384
-key per session, and the verifier's one seam — `LogtoTokenVerifier(key_set=...)`
-— takes the matching in-memory `PyJWKSet`. Fixtures: `as_pharmacist` and
-`as_technician` become token-bearing clients (same names, so the fill tests
-change only in setup); `api` stays `force_authenticate` for the CRUD suites
-(Basic posture, all scopes). New `test_auth_logto.py`: every failure code;
-scope denial per action across the nineteen; first sight creates the
-`Staff` row with history; `identity_changed`; a successor identity
-deactivating its predecessor; role precedence; an admin with no pharmacy
-operating and verifying a fill; a technician allowed to create and to
-update an unfilled prescription, refused once a fill is pending, allowed
-again if that fill is cancelled, allowed on `POST /fills/`; an intern
-refused without `supervising_sub` and allowed with one; key rotation. `test_auth_logto_live.py` runs only
-when `LOGTO_LIVE_ENDPOINT` and the sandbox M2M credentials are set, mints a
-real token by subject-token exchange (§0.2) and sends it through the API —
-skipped loudly otherwise. The `X-Staff-Id` tests go.
+**Test users** (`seed_auth.TEST_USERS`, listed with their details in
+`docs/identity-providers/test-users.md`): two pharmacists, five certified
+technicians, five technicians, two interns and two admins, all with the
+password `Passw0rd!`, employed by the home pharmacy (admins by none), with
+the registration, certification and supervisor their role needs. The seed
+creates or finds each by email, keeps roles and custom data as listed, and
+then **checks every one**: a real token (subject token, then token
+exchange against the UI application), verified through the adapter and
+read through `services.staff.describe` -- the validation a first request
+gets -- so a user whose token the API would refuse fails the seed.
 
-**`mint_token`**: `python manage.py mint_token --email … --roles pharmacist
---pharmacy <id> --scopes …` signs a token with a dev key the verifier
-accepts only when `DJANGO_ENV=local` and `LOGTO_DEV_SIGNING_KEY` is set —
-the two-guard pattern `seed_local` uses.
+**`mint_token`**: `python manage.py mint_token --email … --roles … --pharmacy
+… --registration … --certification …` signs a token in the contract with
+`AUTH_DEV_SIGNING_KEY`, a throwaway key committed in `.env.local` (newlines
+as `\n`). The command refuses outside `DJANGO_ENV=local`, and the verifier
+consults the dev key only while the setting is non-empty, which only
+`local.py` makes it.
 
-## 8. Files
+**Tests** need no provider. `tests/tokens.py` generates an EC P-384 key per
+session and the verifier is handed its JWKS in memory; `Identity` mints
+tokens in the contract and can `register()` a row the way a first request
+would; the `pharmacist` / `technician` fixtures are such identities, and
+`as_pharmacist` / `as_technician` clients bear their tokens. `test_auth.py`
+covers every failure code, scope denial per action, first sight and the
+history it writes, `identity_changed`, succession, role precedence, the
+admin, the technician's unfilled rule, interns, attribution, key rotation.
+`test_providers.py` covers discovery, the internal-URL rewrite, the Logto
+fallback, the identity mapping and adapter selection with a stubbed
+network. `test_seed_auth.py` runs the seed against a fake of the provider's HTTP
+surface, including the users, the token check (the fake signs real
+tokens) and the documented list. `tests/providers/test_logto_live.py` runs only with
+`LOGTO_LIVE_ENDPOINT` and the sandbox credentials set: a real token by
+subject-token exchange, verified by discovery, through the API.
 
-Created: `pharmacy/auth/` (`verifier.py`, `principal.py`,
-`authentication.py`, `permissions.py`, `scopes.py`),
-`migrations/0010_staff_identity.py`, `tests/tokens.py`,
-`tests/test_auth_logto.py`, `tests/test_auth_logto_live.py`,
-`management/commands/mint_token.py`.
+**The curl `e2e/` suite** mints its staff through `E2E_MINT_CMD` (default:
+`mint_token` in the Compose `web` container) and acts with bearer tokens;
+the API creates each identity's record on first sight, and the cases
+compare people by email.
 
-Modified: `models/staff.py` (`external_user_id`, `email`, `roles`, `admin`,
-nullable `pharmacy`, `ROLE_PRECEDENCE`, `SUPERVISING_ROLES`, constraint
-conditions), `models/field_change.py` (`changed_by_user` nullable), `services/staff.py` (`register`, the
-read-only rule), `services/context.py` (`principal`, `staff`),
-`services/prescription.py` (the unfilled rule), `services/fill.py`
-(operator and verifier from the context), `services/history.py`, `serializers/staff.py`,
-`views/base.py` (`ctx` from the principal; header resolution removed),
-every viewset (`required_scopes`), `views/tags.py` (bearer security scheme
-replaces the header parameter), `admin/base.py`, `admin/staff.py`,
-`config/settings/*`, `.env.example`, `.env.local`, `docker-compose.yml`,
-`pyproject.toml` + `uv.lock` (`PyJWT[crypto]`, spliced as before),
-`seed_local.py` (no change to staff rows: they stay hand-typed directory
-entries), the fill and pharmacy tests' setup, `docs/api.md` (authentication,
-scopes), `docs/staff.md` (identity, deactivation), `docs/prescriptions.md`
-(`X-Staff-Id` → bearer), `docs/deployment.md` (variables, Logto),
-`docs/development.md` (Compose, `mint_token`), `AGENTS.md`.
+## 8. The Logto adapter
 
-## 9. What to verify on your Compose instance
+### 8.1 What the adapter knows
 
-All done here against the sandbox instance except item 5:
+The issuer is `{endpoint}/oidc`; the keys are at `{issuer}/jwks` (the
+fallback); a fresh install signs with EC P-384 (`ES384`), RSA only if
+rotated to it. Configured as §8.3, Logto emits the contract directly.
 
-1. Discovery: `issuer` and `jwks_uri` as §0.1 item 3.
-2. A UI-obtained token decodes to the resource `aud`, the role's scopes,
-   and the custom claims.
-3. Bearer → 200; no header → 401 `token_missing`; a technician on
-   `verify/` → 403 `insufficient_scope`.
-4. Rotate the signing key in the console; the next request still succeeds.
-5. The `roles` and `pharmacy_id` claims from the §4 script (to be verified
-   here first, at implementation start).
+### 8.2 Facts about Logto the design rests on
 
-## 10. Open questions
+All checked against a running instance (v1.43):
 
-None.
+- `sub` is Logto's `users.id`, assigned at creation and unchanged by any
+  edit to the user — email, name, custom data; only deleting and recreating
+  the user yields a new one. That is what makes `external_user_id` a safe
+  reference.
+- An access token for an API resource carries `iss`, `aud`, `sub`,
+  `scope`, `client_id`, `jti`, `iat`, `exp` and nothing about the user;
+  `email` and the rest of the contract arrive only through the access-token
+  JWT customizer. **A token is issued even when the customizer throws**,
+  with no custom claims, regardless of `blockIssuanceOnError` — so the API
+  refuses a token without `email` itself.
+- A token's `scope` is silently capped at what the user's roles grant; a
+  scope the roles do not hold is dropped, not refused. `HasScope` is what
+  turns that into a 403.
+- Logto enforces a unique primary email; suffixing an old user's email
+  with `-DEACTIVATED` frees it, and suspending the user
+  (`PATCH /api/users/{id}/is-suspended`) makes token issuance fail. The
+  suffix alone does not stop sign-in.
+- Logto selects the **admin tenant** by the request's `Host` header
+  matching `ADMIN_ENDPOINT`; a request to the internal address must carry
+  the public host to reach it.
+- The admin tenant's password policy consults `api.pwnedpasswords.com`
+  unless the database was seeded with `--dapc`; on a host without internet
+  the first admin could otherwise never be created.
+- The first admin is an ordinary registration in the admin tenant, open
+  only until it has a user; after that Logto flips the tenant's sign-in
+  mode, and deleting the user does not reopen it.
+- The console obtains a Management API token by signing the admin in with
+  authorization code + PKCE for the `admin-console` client, consenting to
+  the resource `https://default.logto.app/api`, and exchanging the code.
+  That is how the seed does it too.
 
-## 11. Implementation notes
+### 8.3 Configuring an instance
 
-What was built follows §1–§9. Differences and discoveries:
+What this API needs from Logto, under the tenant it trusts — done locally
+by `manage.py seed_auth`, idempotently, on every boot; elsewhere once, in
+the console or through the Management API:
 
-- **Verified on the running Logto first**, as §9 item 5 asked: with the §4
-  customizer re-applied, a token for a user holding two roles carries
-  `"roles": ["pharmacist", "technician"]`, and `pharmacy_id` and
-  `supervising_sub` come through from `custom_data`. The sandbox instance
-  now also holds the full resource (22 scopes), the five roles with their
-  grants, and `test_auth_logto_live.py` passes against it end to end: a
-  real token, verified against the live JWKS, creates the `Staff` row and
-  is refused a scope it did not ask for.
-- **Twenty-two scopes, not twenty-one** — the plan's count was off by one;
-  the table was right.
-- **`PyJWT[crypto]` was spliced into `uv.lock` by hand** (the four blocks
-  `pyjwt`, `cryptography`, `cffi`, `pycparser`), as the staff work did,
-  because this sandbox's PyPI mirror rewrites every URL on `uv lock` and
-  does not even list the `faker` version already locked, so `uv lock
-  --check` cannot run here. File sizes were taken from the real host's
-  `Content-Length`; `uv sync --frozen` installs cleanly. Worth a `uv lock`
-  on a normal network to confirm it is a no-op.
-- **`pharmacy/exceptions.py` imports DRF's exception handler lazily**:
-  `rest_framework.views` evaluates the configured authentication classes on
-  import, which import the services, which import `exceptions` — a cycle
-  once the auth class lived in this app.
-- **`Principal.pk`** exists because DRF's `UserRateThrottle` keys on
-  `request.user.pk`; a principal's is its subject, so throttling is per
-  identity.
-- **`HasScope` lets an unsupported method through to the 405** rather than
-  failing closed on an action the view does not serve (a `PUT` on a fill).
-- **Registration on first sight runs `full_clean()` after retiring the
-  predecessor**, because Django validates the partial unique constraint in
-  `full_clean()` and the constraint is over active rows.
-- `credential_problems()` gained a keyword-only `pharmacy_id`, checked only
-  when passed (the model and the token registration pass it; the serializer
-  takes the employer from the URL and does not).
-- The admin's `Staff` page shows `email`, `source` (logto / manual) and
-  makes every field but `is_active` read-only on a Logto-sourced row; the
-  service refuses the rest anyway.
-- **The curl-driven `e2e/` suite mints its staff.** `req_staff` sends a
-  bearer token; `make_staff_identity PHARMACY ROLE` gets one from
-  `E2E_MINT_CMD` (default: `manage.py mint_token` in the Compose `web`
-  container), signed with a throwaway `LOGTO_DEV_SIGNING_KEY` now
-  committed in `.env.local`, and the API creates the staff record on the
-  token's first request. The two fill cases compare people by email, and
-  assert the new refusals (403 `staff_identity_required` for a login, 403
-  `insufficient_scope` naming `fills:verify` for a technician). Run here
-  against a dev server on the embedded Postgres with a wasm `jq` shim:
-  745 passed, 0 failed.
-- **Public versus internal endpoint.** Logto writes its public `ENDPOINT`
-  into every token's `iss`, and under Compose that is a host port the
-  `web` container cannot reach; `LOGTO_INTERNAL_ENDPOINT` (optional) is
-  where the keys are fetched when it differs, and the issuer stays the
-  public URL. The same split serves a deployment behind a proxy.
-- **The console's first admin is seeded** by a one-shot `auth-seed` Compose
-  service running `scripts/create_auth_admin.py` (standard library only,
-  in the `web` image). Logto has no setting for it: its first admin is an
-  ordinary registration in the admin tenant, open only while that tenant
-  has no users, so the script performs that registration over the
-  experience API the Welcome page uses and treats "username already in
-  use" as done. Two Logto facts it works around, both verified here: the
-  admin tenant is selected by the request's `Host` header matching
-  `ADMIN_ENDPOINT` (so the script sends the public host while travelling to
-  the internal address), and the admin tenant's password policy consults
-  api.pwnedpasswords.com unless seeded with `--dapc`, which Compose now
-  passes. Credentials are `AUTH_ADMIN_USERNAME` / `AUTH_ADMIN_PASSWORD` in
-  `.env.local`.
-- Run on the embedded PostgreSQL 16.2: 506 tests pass and 1 skips (the live
-  test, off without `LOGTO_LIVE_ENDPOINT`; it passes when pointed at the
-  sandbox instance). `ruff check`, `ruff format --check`,
-  `makemigrations --check` and `spectacular --fail-on-warn` are clean.
-- **Superseded in part by `plans/auth-provider/plan.md`**: the Logto-named
-  classes, settings, error code and claim described above were renamed
-  and the provider-specific knowledge moved behind an adapter. Where this
-  document says `LogtoJWTAuthentication`, `LOGTO_ENDPOINT`,
-  `identity_managed_by_logto` or `supervising_sub`, read
-  `BearerTokenAuthentication`, `AUTH_ISSUER`, `identity_managed_externally`
-  and `supervising_user_id`.
+1. An **API resource** whose indicator is `AUTH_AUDIENCE`, token TTL 900 s,
+   with every scope in `pharmacy/auth/scopes.py` created on it by name.
+2. **Roles** named as `StaffRole` values, each granted the scopes
+   `ROLE_SCOPES` lists.
+3. An **application** for the UI (single-page, PKCE) that requests the
+   resource and its scopes at sign-in.
+4. The **access-token JWT customizer** (`seed_auth.CUSTOMIZER`, reproduced in
+   `docs/identity-providers/logto.md`): `email`, `email_verified`, `name`,
+   `given_name`, `family_name` from Logto's own user fields, `roles` from
+   the user's roles, and `pharmacy_id`, the registration, the
+   certification and `supervising_user_id` from `customData`.
+   Also an **application** named `open-pharmacy-ui` (single-page, PKCE,
+   redirect `http://localhost:3000/callback`, token exchange enabled for
+   the seed's check and the e2e suite).
+5. **Users**: primary email, given and family name, one or more roles, and
+   `custom_data` with the employer, the registration for pharmacists and
+   certified technicians, the certification for certified technicians, and
+   the supervisor for interns. A token that cannot make a valid `Staff` row
+   is refused, so the console is where completeness shows.
+
+`seed_auth` also creates the console's first admin from
+`AUTH_ADMIN_USERNAME` / `AUTH_ADMIN_PASSWORD` (the Welcome page's
+registration, over the same experience API the page uses) and then signs
+that admin in as the console does for its Management API token.
+
+## 9. Files
+
+`pharmacy/auth/` — `claims.py`, `providers/{base,oidc,logto}.py`,
+`verifier.py`, `principal.py`, `authentication.py`, `permissions.py`,
+`scopes.py`, `schema.py`. `pharmacy/management/commands/{mint_token,seed_auth}.py`.
+`pharmacy/migrations/0010_staff_identity.py`. Tests: `tokens.py`,
+`test_auth.py`, `test_providers.py`, `test_seed_auth.py`,
+`test_mint_token.py`, `providers/test_logto_live.py`. Docs: `api.md`
+(authentication, scopes), `staff.md` (identity records, changing a
+person), `errors.md`, `deployment.md` (the identity provider),
+`identity-providers/logto.md`, `identity-providers/test-users.md`,
+`development.md`. Compose: the `auth` and `auth-seed` services,
+`scripts/create-auth-db.sh`.
