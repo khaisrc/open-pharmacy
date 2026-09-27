@@ -226,3 +226,13 @@ def as_pharmacist(pharmacist):
 @pytest.fixture
 def as_technician(technician):
     return as_staff(APIClient(), technician)
+
+
+@pytest.fixture
+def fake_logto():
+    """A fake identity provider over HTTP on a free port (tests/fake_logto.py)."""
+    from .fake_logto import serve
+
+    state, stop = serve()
+    yield state
+    stop()
