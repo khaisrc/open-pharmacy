@@ -41,6 +41,12 @@ class Command(BaseCommand):
         parser.add_argument(
             "--registration", nargs=2, metavar=("STATE", "NUMBER"), help="Board registration."
         )
+        parser.add_argument(
+            "--certification",
+            nargs=2,
+            metavar=("BODY", "NUMBER"),
+            help="PTCB or NHA certification.",
+        )
         parser.add_argument("--supervisor", help="supervising_user_id, for an intern.")
         parser.add_argument("--scopes", nargs="*", help="Defaults to the roles' scopes.")
         parser.add_argument("--ttl", type=int, default=3600, help="Seconds until expiry.")
@@ -97,4 +103,6 @@ class Command(BaseCommand):
         }
         if options["registration"]:
             claims[c.REGISTRATION_STATE], claims[c.REGISTRATION_NUMBER] = options["registration"]
+        if options["certification"]:
+            claims[c.CERTIFICATION_BODY], claims[c.CERTIFICATION_NUMBER] = options["certification"]
         self.stdout.write(jwt.encode(claims, key, algorithm="ES384", headers={"kid": DEV_KID}))
