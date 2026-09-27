@@ -12,8 +12,15 @@ are checked (`permissions`). The scopes themselves are named once, in
 from . import schema  # noqa: F401  (registers the OpenAPI security scheme)
 from .authentication import BearerTokenAuthentication
 from .permissions import HasScope
-from .principal import Principal
+from .principal import Principal, principal_of
 from .scopes import Scope
 from .verifier import TokenVerifier
 
-__all__ = ["BearerTokenAuthentication", "HasScope", "Principal", "Scope", "TokenVerifier"]
+__all__ = [
+    "BearerTokenAuthentication",
+    "HasScope",
+    "Principal",
+    "Scope",
+    "TokenVerifier",
+    "principal_of",
+]

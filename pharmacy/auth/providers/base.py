@@ -13,7 +13,10 @@ class IdentityProvider:
     algorithms = ("ES384", "RS256")
 
     def __init__(self, issuer, audience, internal_url=None):
-        self.issuer = issuer.rstrip("/")
+        # Required exactly as configured: some providers' `iss` ends in a
+        # slash (Auth0's does). URLs are built from `base_url` instead.
+        self.issuer = issuer
+        self.base_url = issuer.rstrip("/")
         self.audience = audience
         # Where this service reaches the provider when that is not the
         # public issuer: the Compose network, a private subnet behind a

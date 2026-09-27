@@ -88,3 +88,12 @@ class Principal:
 
     def __str__(self):
         return self.email or self.external_user_id
+
+
+def principal_of(request):
+    """The request's principal: the one the bearer token produced, or one
+    made from the Django user a session or Basic credential authenticated."""
+    user = request.user
+    if isinstance(user, Principal):
+        return user
+    return Principal.from_django_user(user)

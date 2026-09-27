@@ -39,7 +39,7 @@ class OIDCProvider(IdentityProvider):
         return urlunsplit((base.scheme, base.netloc, parts.path, parts.query, parts.fragment))
 
     def discovery_url(self):
-        return self.internal(f"{self.issuer}{DISCOVERY_PATH}")
+        return self.internal(f"{self.base_url}{DISCOVERY_PATH}")
 
     def jwks_uri(self):
         if self._jwks_uri is None:

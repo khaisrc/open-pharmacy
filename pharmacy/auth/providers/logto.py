@@ -15,4 +15,4 @@ from .oidc import OIDCProvider
 
 class LogtoProvider(OIDCProvider):
     def fallback_jwks_uri(self):
-        return self.internal(f"{self.issuer}/jwks")
+        return self.internal(f"{self.base_url}/jwks")

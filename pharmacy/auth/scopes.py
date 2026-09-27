@@ -62,6 +62,15 @@ ROLE_SCOPES = {
 }
 
 
+def scopes_for_roles(roles):
+    """The union of what each role grants; a role not in ROLE_SCOPES grants
+    nothing. What the identity provider puts in a token's `scope` claim."""
+    granted = frozenset()
+    for role in roles:
+        granted |= ROLE_SCOPES.get(role, frozenset())
+    return granted
+
+
 def crud_scopes(read, write, *, create=None, update=None):
     """`required_scopes` for a viewset: the standard actions mapped to one
     read scope and one write scope (or a separate create and update)."""

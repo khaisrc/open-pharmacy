@@ -6,6 +6,8 @@ audience and algorithms to require. Nothing else is accepted: the algorithm
 allow-list is the adapter's and never contains `none` or a symmetric one.
 """
 
+from functools import cache
+
 import jwt
 from django.conf import settings
 from jwt import PyJWKClient, PyJWKClientError, PyJWKSet
@@ -57,8 +59,10 @@ class TokenVerifier:
 
     def signing_key(self, token):
         header = jwt.get_unverified_header(token)
-        if header.get("kid") == DEV_KID and self._dev_public_key() is not None:
-            return self._dev_public_key()
+        if header.get("kid") == DEV_KID:
+            dev_key = _dev_public_key(getattr(settings, "AUTH_DEV_SIGNING_KEY", ""))
+            if dev_key is not None:
+                return dev_key
         if self._key_set is not None:
             for key in self._key_set.keys:
                 if key.key_id == header.get("kid"):
@@ -86,19 +90,20 @@ class TokenVerifier:
             options={"require": REQUIRED_CLAIMS},
         )
 
-    @staticmethod
-    def _dev_public_key():
-        """The public half of AUTH_DEV_SIGNING_KEY, when local sets one: the
-        key `manage.py mint_token` signs with. Nothing outside local.py reads
-        the setting, so this is None everywhere else."""
-        pem = getattr(settings, "AUTH_DEV_SIGNING_KEY", "")
-        if not pem:
-            return None
-        from cryptography.hazmat.primitives import serialization
 
-        # .env files hold the PEM on one line with literal \n.
-        pem = pem.replace("\\n", "\n")
-        return serialization.load_pem_private_key(pem.encode(), password=None).public_key()
+@cache
+def _dev_public_key(pem):
+    """The public half of AUTH_DEV_SIGNING_KEY, when local sets one: the key
+    `manage.py mint_token` signs with. Nothing outside local.py reads the
+    setting, so this is None everywhere else. Cached per PEM, so a changed
+    setting is still read."""
+    if not pem:
+        return None
+    from cryptography.hazmat.primitives import serialization
+
+    # .env files hold the PEM on one line with literal \n.
+    pem = pem.replace("\\n", "\n")
+    return serialization.load_pem_private_key(pem.encode(), password=None).public_key()
 
 
 def key_set_from(jwks):
