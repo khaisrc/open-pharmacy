@@ -63,7 +63,7 @@ Configuration comes from the environment:
 | `API_USER` | `admin` |
 | `API_PASS` | `admin` |
 | `JOBS` | same as `-p` (`8`) |
-| `E2E_MINT_CMD` | `docker compose run --rm -T web python manage.py mint_token` -- how the fill cases mint staff tokens; the server must hold the same `AUTH_DEV_SIGNING_KEY` as `.env.local` |
+| `E2E_MINT_CMD` | `docker compose exec -T web python manage.py mint_token` -- how the fill cases mint staff tokens; the server must hold the same `AUTH_DEV_SIGNING_KEY` as `.env.local` |
 
 ```bash
 BASE_URL=https://staging.example.com API_PASS=hunter2 ./e2e/run.sh
@@ -180,7 +180,7 @@ assert_jq_eq '.state' 'OR' "state round-trips"
 
 Write each assertion as the rest of its Then: the keyword and the When above it are already on the line, so `"the address is created"` reads as a step where `"POST /addresses/ creates an address"` would repeat both.
 
-`req METHOD PATH [JSON]` sends an authenticated request and leaves the result in `$STATUS` and `$BODY`; `req_anon` and `req_as USER PASS` are the unauthenticated and explicit-credential versions. `req_staff TOKEN METHOD PATH [JSON]` sends a bearer token instead, which is how a write names the person performing it -- the fill workflow refuses a login where it needs a person. The tokens come from `make_staff_identity PHARMACY_ID ROLE` in `fixtures.sh`, which mints one the way a local developer does (`manage.py mint_token`, signed with the dev key in `.env.local`); the API creates the staff record from the token on its first request. `E2E_MINT_CMD` is the command that mints, by default `docker compose run --rm -T web python manage.py mint_token`; on a host with the project's Python, `E2E_MINT_CMD="uv run python manage.py mint_token"` skips the container. The assertions are `assert_status`, `assert_status_in`, `assert_jq`, `assert_jq_eq`, `assert_eq` and `assert_error_code`. `assert_jq` passes trailing arguments to `jq`, so a value binds safely instead of being spliced into the filter:
+`req METHOD PATH [JSON]` sends an authenticated request and leaves the result in `$STATUS` and `$BODY`; `req_anon` and `req_as USER PASS` are the unauthenticated and explicit-credential versions. `req_staff TOKEN METHOD PATH [JSON]` sends a bearer token instead, which is how a write names the person performing it -- the fill workflow refuses a login where it needs a person. The tokens come from `make_staff_identity PHARMACY_ID ROLE` in `fixtures.sh`, which mints one the way a local developer does (`manage.py mint_token`, signed with the dev key in `.env.local`); the API creates the staff record from the token on its first request. `E2E_MINT_CMD` is the command that mints, by default `docker compose exec -T web python manage.py mint_token`; on a host with the project's Python, `E2E_MINT_CMD="uv run python manage.py mint_token"` skips the container. The assertions are `assert_status`, `assert_status_in`, `assert_jq`, `assert_jq_eq`, `assert_eq` and `assert_error_code`. `assert_jq` passes trailing arguments to `jq`, so a value binds safely instead of being spliced into the filter:
 
 ```bash
 assert_jq 'any(.results[]; .id == $id)' "it is listed" --arg id "$ID"

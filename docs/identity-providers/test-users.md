@@ -27,7 +27,7 @@ username or the email.
 | `grace_hopper` | `grace.hopper@open-pharmacy.local` | Grace Hopper | admin | -- | -- |
 
 What each role may do is the scope table in [../api.md](../api.md#scopes):
-admins and pharmacists everything; certified technicians and technicians
+admins and pharmacists everything, except that only a pharmacist verifies a fill; certified technicians and technicians
 every read plus creating and (until a fill is started) changing
 prescriptions, fills, patients and addresses -- not verifying a fill, not
 onboarding a pharmacy; interns the same, supervised. The seed checks every

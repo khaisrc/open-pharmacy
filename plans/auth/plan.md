@@ -136,7 +136,7 @@ Twenty-two. The roles, named as `StaffRole` values (`ROLE_SCOPES`):
 
 | Role | Scopes |
 |---|---|
-| `admin` | all twenty-two; a superuser employed by no particular pharmacy |
+| `admin` | all twenty-two; a superuser employed by no particular pharmacy. Verifying a fill also needs the `pharmacist` role (403 `pharmacist_required`), so an admin verifies only when it is a pharmacist too |
 | `pharmacist` | all twenty-two |
 | `certified_technician`, `technician` | every `:read`; `prescriptions:create`, `prescriptions:update_unfilled`; `fills:write`; `patients:write`; `addresses:write` |
 | `intern` | a technician's scopes, and the token must carry `supervising_user_id` (§4.4) |
@@ -163,8 +163,8 @@ permissions. `pharmacies:onboard` is enforced the same way in
 
 | Field | |
 |---|---|
-| `external_user_id` | `CharField(32)`, blank on a hand-typed row, unique among live rows (`uniq_live_staff_external_user_id`). The token's subject. A row without one is a directory entry that can be named but cannot act. |
-| `email` | `EmailField`, unique among live rows when set (`uniq_live_staff_email`). |
+| `external_user_id` | `CharField(255)` (OIDC subjects run to UUIDs and prefixed ids such as Auth0's `google-oauth2\|…`), blank on a hand-typed row, unique among live rows (`uniq_live_staff_external_user_id`). The token's subject. A row without one is a directory entry that can be named but cannot act. |
+| `email` | `EmailField`, unique among **active** live rows when set (`uniq_live_staff_email`), so a successor can keep the person's email. |
 | `roles` | `JSONField`, the token's `roles` in full. |
 | `role` | the highest of `roles` by `ROLE_PRECEDENCE`; a column because filters and the rules key on it. |
 | `pharmacy` | nullable: required for every role but `admin` (`credential_problems()` holds it when asked to). |
@@ -189,13 +189,17 @@ every bearer request:
    `identity_changed` and nothing is written. Identity per subject is
    immutable by policy — a change of any of those is a new user at the
    provider — and this comparison is what enforces it, since a provider
-   issues a token for an edited user just the same.
+   issues a token for an edited user just the same. An inactive row is 401
+   `staff_inactive`: suspending the user at the provider stops new tokens,
+   and this stops one already issued.
 2. If not found, register: build the row from the claims
    (`identity_incomplete` if no recognised role, a non-admin without a
-   known `pharmacy_id`, a pharmacist without a registration); deactivate
-   any **active** row holding the same registration or NPI — the successor
-   taking over — then `full_clean()`, insert, and record history for both
-   with `changed_by_staff` = the new row. The row is its own first actor.
+   known, well-formed `pharmacy_id`, a pharmacist without a registration);
+   under an advisory lock on the subject, so concurrent first requests make
+   one row, deactivate any **active** row holding the same registration,
+   NPI or email — the successor taking over — then `full_clean()`, insert,
+   and record history for both with `changed_by_staff` = the new row. The
+   row is its own first actor.
 3. A row with `external_user_id` is read-only through the staff API and the
    admin except `is_active` (409 `identity_managed_externally`).
 

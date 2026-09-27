@@ -221,7 +221,7 @@ _make_staff() {
 # E2E_MINT_CMD is the command that mints; the default runs it in the Compose
 # web container. On a host with the project's Python, set it to
 # `uv run python manage.py mint_token`.
-: "${E2E_MINT_CMD:=docker compose run --rm -T web python manage.py mint_token}"
+: "${E2E_MINT_CMD:=docker compose exec -T web python manage.py mint_token}"
 NEW_TOKEN=""; NEW_EMAIL=""
 make_staff_identity() { given "a ${2:-pharmacist} can sign in" _make_staff_identity "$@"; }
 _make_staff_identity() {
