@@ -7,7 +7,7 @@ Compose. `docker compose run --rm web …` starts the database, runs the one-sho
 ```bash
 docker compose up                       # serve, with migrations and seed
 docker compose up --build               # after changing dependencies
-docker compose down -v                  # stop and drop the database
+docker compose --profile auth down -v   # stop everything and drop the database
 docker compose logs -f web
 
 docker compose run --rm web pytest
@@ -40,6 +40,73 @@ It writes `e2e/report.html`, a self-contained Gherkin-shaped record of every
 request and response the run made. CI (`.github/workflows/e2e.yml`) runs the
 same thing against the same Compose stack and attaches that report to the run.
 `e2e/README.md` covers the rest.
+
+## The identity server locally
+
+The identity server, the `auth` service (Logto), sits behind the `auth`
+Compose profile, so a plain `docker compose up` leaves it out. `make start`
+turns the profile on, and `NO_AUTH=1` turns it back off:
+
+```bash
+docker compose --profile auth up    # or: make start
+docker compose up                   # or: make start NO_AUTH=1
+docker compose --profile auth stop  # or: make stop; keeps the database and Logto's state
+```
+
+The API does not need it to start. It fetches the provider's keys on the
+first request that presents a provider token, and a token from
+`manage.py mint_token` is verified against `AUTH_DEV_SIGNING_KEY` without any
+fetch at all -- which is how the unit tests, the e2e suite and CI work. Start
+the profile when you want the console, or to sign in against the real
+provider.
+
+It runs against a second database on the same Postgres: the console on
+`http://127.0.0.1:8442`, tokens from `http://localhost:8441`. Both host
+ports come from the shell (`AUTH_PORT`, `AUTH_CONSOLE_PORT`) like
+`WEB_PORT`; `AUTH_ISSUER` in `.env.local` must name the same port as
+`AUTH_PORT`, since the provider writes it into every token's issuer.
+
+Open the console at `127.0.0.1`, not `localhost`. The console is served on
+one port and calls the default tenant's management API on the other, and
+Logto sends the CORS headers for that cross-origin call only when the
+browser's origin matches its `ADMIN_ENDPOINT`. Logto's own start script
+forces `NODE_ENV=production`, and in production it drops any origin whose
+hostname is the literal string `localhost` as unsafe. So `ADMIN_ENDPOINT`
+names `127.0.0.1` -- the same host, but a hostname that survives the check.
+Reaching the console on `localhost:8442` instead loads the page and signs
+you in, then fails every management call with a CORS error in the browser
+console:
+
+    Access to fetch at 'http://localhost:8441/api/users' from origin
+    'http://localhost:8442' has been blocked by CORS policy
+
+The one-shot `auth-seed` service (`manage.py seed_auth`) creates the
+console's first admin from `AUTH_ADMIN_USERNAME` / `AUTH_ADMIN_PASSWORD` in
+`.env.local` (`admin` / `Passw0rd!`), configures the provider for this API
+-- the resource, its scopes, the roles, the token customizer, the UI
+application -- and creates the [test users](identity-providers/test-users.md)
+(two pharmacists, five certified technicians, five technicians, two interns,
+two admins; all `Passw0rd!`), checking each one's token the way the API
+reads it. A re-run finds everything and changes nothing. Logto opens the
+first admin's registration only until an admin exists, so to change the
+username, drop the `auth` database (`docker compose --profile auth down -v`; without the
+profile, `down` leaves the running `auth` container behind). First boot:
+open the console and sign in as the seeded admin to create users; the rest
+is already configured ([identity-providers/logto.md](identity-providers/logto.md)).
+For curl as one of the seeded users, ask the provider for their token
+(`make -s token AS=elena_ortiz`; see
+[identity-providers/test-users.md](identity-providers/test-users.md#getting-a-token)).
+For an identity of your own, without the provider, mint a token the API
+accepts locally:
+
+```bash
+docker compose run --rm web python manage.py mint_token --generate-key   # once; paste into .env.local
+docker compose run --rm web python manage.py mint_token --email rph@example.local \
+    --roles pharmacist --pharmacy <pharmacy uuid> --registration NY RPH.900001
+```
+
+The key is read by `local.py` only, so the command and the tokens it mints
+mean nothing outside local.
 
 ## Running the suite without Docker
 

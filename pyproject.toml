@@ -17,6 +17,8 @@ dependencies = [
     "gunicorn>=26.2.0",
     # Demo people in seed_local; also what factory_boy draws on in the tests.
     "faker>=40.39.0",
+    # Verifying Logto access tokens against its JWKS (ES384 / RS256).
+    "pyjwt[crypto]>=2.13.0",
 ]
 
 [dependency-groups]

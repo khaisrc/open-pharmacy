@@ -2,6 +2,7 @@ from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework.decorators import action
 
 from pharmacy import repositories, services
+from pharmacy.auth.scopes import Scope, crud_scopes
 from pharmacy.filters import PrescriberFilter
 from pharmacy.serializers import PrescriberSerializer, PrescriptionSerializer
 
@@ -9,11 +10,16 @@ from .base import SoftDeleteModelViewSet, nested_list
 from .prescription import PrescriptionViewSet
 from .tags import tagged
 
+SCOPES = crud_scopes(Scope.PRESCRIBERS_READ, Scope.PRESCRIBERS_WRITE) | {
+    "prescriptions": {Scope.PRESCRIPTIONS_READ},
+}
 
-@extend_schema_view(**tagged("Prescribers", "prescriptions"))
+
+@extend_schema_view(**tagged("Prescribers", "prescriptions", scopes=SCOPES))
 class PrescriberViewSet(SoftDeleteModelViewSet):
     repository = repositories.prescribers
     service = services.prescribers
+    required_scopes = SCOPES
     serializer_class = PrescriberSerializer
     filterset_class = PrescriberFilter
     search_fields = ["first_name", "last_name", "npi"]

@@ -4,6 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from pharmacy import repositories, services
+from pharmacy.auth.scopes import Scope
 from pharmacy.filters import FillFilter
 from pharmacy.serializers import FillSerializer
 
@@ -11,9 +12,27 @@ from .base import ScopedViewSetMixin, ServiceViewSetMixin
 from .tags import PRESCRIPTION_ID, tagged
 
 TRANSITIONS = ["verify", "unverify", "complete", "cancel"]
+COLLECTION_SCOPES = {"list": {Scope.FILLS_READ}, "create": {Scope.FILLS_WRITE}}
+# Verifying is the pharmacist's act and has a scope of its own; every other
+# move is the counter's work.
+DETAIL_SCOPES = {
+    "retrieve": {Scope.FILLS_READ},
+    "partial_update": {Scope.FILLS_WRITE},
+    "verify": {Scope.FILLS_VERIFY},
+    "unverify": {Scope.FILLS_WRITE},
+    "complete": {Scope.FILLS_WRITE},
+    "cancel": {Scope.FILLS_WRITE},
+}
 
 
-@extend_schema_view(**tagged("Fills", parameters=[PRESCRIPTION_ID], actions=["list", "create"]))
+@extend_schema_view(
+    **tagged(
+        "Fills",
+        parameters=[PRESCRIPTION_ID],
+        actions=["list", "create"],
+        scopes=COLLECTION_SCOPES,
+    )
+)
 class PrescriptionFillsViewSet(
     ScopedViewSetMixin,
     ServiceViewSetMixin,
@@ -30,12 +49,15 @@ class PrescriptionFillsViewSet(
     parent_field = "prescription"
     repository = repositories.fills
     service = services.fills
+    required_scopes = COLLECTION_SCOPES
     serializer_class = FillSerializer
     filterset_class = FillFilter
     ordering_fields = ["sequence", "created_at"]
 
 
-@extend_schema_view(**tagged("Fills", *TRANSITIONS, actions=["retrieve", "partial_update"]))
+@extend_schema_view(
+    **tagged("Fills", *TRANSITIONS, actions=["retrieve", "partial_update"], scopes=DETAIL_SCOPES)
+)
 class FillViewSet(
     ServiceViewSetMixin,
     mixins.RetrieveModelMixin,
@@ -47,6 +69,7 @@ class FillViewSet(
 
     repository = repositories.fills
     service = services.fills
+    required_scopes = DETAIL_SCOPES
     serializer_class = FillSerializer
     http_method_names = ["get", "patch", "post", "head", "options"]
 
@@ -59,8 +82,8 @@ class FillViewSet(
     @extend_schema(
         summary="Verify a fill",
         description=(
-            "pending → verified, recording the X-Staff-Id pharmacist as verified_by. "
-            "400 when the header is missing or names someone who is not a pharmacist; "
+            "pending → verified, recording the token's staff member as verified_by. "
+            "403 without the fills:verify scope or as a login rather than a person; "
             "409 from any other status."
         ),
         request=None,

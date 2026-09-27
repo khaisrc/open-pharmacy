@@ -11,40 +11,29 @@ source "$E2E_DIR/lib/fixtures.sh"
 # id at the top shows up as a puzzling refusal at the bottom.
 #
 # Two people, because the workflow needs two: a technician starts a fill and a
-# pharmacist verifies it. Both act through X-Staff-Id, which is how a write
-# names the person performing it -- the API credentials say which client is
-# calling, not who is at the counter.
+# pharmacist verifies it. Each acts through a bearer token for their own
+# identity -- the API credentials say which client is calling, the token says
+# who is at the counter -- and the API creates their staff record from the
+# token the first time it sees them.
 
 section "the pharmacy and its staff"
 
 use_home_pharmacy; PHARMACY="$HOME_PHARMACY"; LOCATION="$HOME_LOCATION"
 
-PHARMACIST_LAST="Pharmacist-${RUN_TAG}x$(_rand 1000000)"
-PHARMACIST_REG="$(gen_registration)"
-when "a pharmacist is hired"
-req POST "/pharmacies/${PHARMACY}/staff/" "$(jq -nc \
-  --arg last "$PHARMACIST_LAST" --arg reg "$PHARMACIST_REG" '{
-    first_name: "Perry", last_name: $last, role: "pharmacist",
-    registration_state: "OR", registration_number: $reg }')"
-assert_status 201 "the pharmacist is created"
-assert_jq_eq '.role' 'pharmacist' "the role round-trips"
-assert_jq_eq '.registration_number' "$PHARMACIST_REG" "the state registration round-trips"
-assert_jq_eq '.is_active' 'true' "a new hire is active"
-assert_jq_eq '.pharmacy.id' "$PHARMACY" "they are employed by the pharmacy in the path"
-PHARMACIST="$(jqv .id)"
+make_staff_identity "$PHARMACY" pharmacist
+PHARMACIST="$NEW_TOKEN"; PHARMACIST_EMAIL="$NEW_EMAIL"; PHARMACIST_LAST="$NEW_LAST_NAME"
+make_staff_identity "$PHARMACY" technician
+TECH="$NEW_TOKEN"; TECH_EMAIL="$NEW_EMAIL"; TECH_LAST="$NEW_LAST_NAME"
 
-TECH_LAST="Tech-${RUN_TAG}x$(_rand 1000000)"
-TECH_REG="$(gen_registration)"
-when "a pharmacy technician is hired"
-req POST "/pharmacies/${PHARMACY}/staff/" "$(jq -nc \
-  --arg last "$TECH_LAST" --arg reg "$TECH_REG" '{
-    first_name: "Tessa", last_name: $last, role: "technician",
-    registration_state: "OR", registration_number: $reg }')"
-assert_status 201 "the technician is created"
-assert_jq_eq '.role' 'technician' "the role round-trips"
-assert_jq_eq '.is_active' 'true' "a new hire is active"
-assert_jq_eq '.pharmacy.id' "$PHARMACY" "they work at the same pharmacy"
-TECH="$(jqv .id)"
+when "the technician reads the roster"
+req_staff "$TECH" GET "/pharmacies/${PHARMACY}/staff/?search=${TECH_LAST}"
+assert_status 200 "the roster is returned"
+assert_jq '.count == 1' "their record was created on first sight"
+assert_jq_eq '.results[0].email' "$TECH_EMAIL" "it carries the email from the token"
+assert_jq_eq '.results[0].role' 'technician' "the role round-trips"
+assert_jq_eq '.results[0].is_external' 'true' "it is owned by the identity server"
+assert_jq_eq '.results[0].is_active' 'true' "a new hire is active"
+assert_jq_eq '.results[0].pharmacy.id' "$PHARMACY" "they are employed by the pharmacy in the token"
 
 section "the patient"
 
@@ -134,12 +123,12 @@ assert_jq '.results | length == 0' "there are no fills yet"
 
 section "a whole fill: the technician starts it"
 
-# Who performed the write is the header, not the credentials, so a fill with
-# no X-Staff-Id is refused before anything is reserved.
-when "a fill is started without naming the operator"
+# A fill names the person who started it, so a login (Basic) that maps to no
+# staff record is refused before anything is reserved.
+when "a fill is started as a login rather than a person"
 req POST "/prescriptions/${RX}/fills/" '{"quantity_dispensed":30,"days_supply":30}'
-assert_status 400 "it is refused with 400"
-assert_error_code "staff_required" "the error code is staff_required"
+assert_status 403 "it is refused with 403"
+assert_error_code "staff_identity_required" "the error code is staff_identity_required"
 
 when "the technician starts a fill for the whole written quantity"
 req_staff "$TECH" POST "/prescriptions/${RX}/fills/" '{"quantity_dispensed":30,"days_supply":30}'
@@ -149,7 +138,7 @@ assert_jq_eq '.sequence' '1' "it is the first fill on this prescription"
 assert_jq_eq '.quantity_dispensed' '30' "it is for thirty tablets"
 assert_jq_eq '.days_supply' '30' "it carries a thirty-day supply"
 assert_jq_eq '.is_partial' 'false' "a whole written quantity is not a partial fill"
-assert_jq_eq '.operator.id' "$TECH" "the technician is recorded as the operator"
+assert_jq_eq '.operator.email' "$TECH_EMAIL" "the technician is recorded as the operator"
 assert_jq_eq '.verified_by' 'null' "nobody has verified it yet"
 assert_jq_eq '.dispensed_at' 'null' "nothing has been dispensed yet"
 assert_jq_eq '.rx_number' "$RX_NUMBER" "it carries the prescription's Rx number"
@@ -169,18 +158,20 @@ assert_jq_eq '.quantity_remaining' '60' "sixty units are still free"
 
 section "a whole fill: the pharmacist verifies it"
 
+# Verifying is the pharmacist's act: a scope the technician's token does not
+# carry, refused before the service sees it.
 when "the technician tries to verify their own fill"
 req_staff "$TECH" POST "/fills/${FILL}/verify/"
-assert_status 400 "it is refused with 400"
-assert_error_code "pharmacist_required" "the error code is pharmacist_required"
-assert_jq_eq '.error.details.role' 'technician' "the refusal reports the role it saw"
+assert_status 403 "it is refused with 403"
+assert_error_code "insufficient_scope" "the error code is insufficient_scope"
+assert_jq '.error.details.required == ["fills:verify"]' "the refusal names the scope it takes"
 
 when "the pharmacist verifies the fill"
 req_staff "$PHARMACIST" POST "/fills/${FILL}/verify/"
 assert_status 200 "the verification is accepted"
 assert_jq_eq '.status' 'verified' "the fill is now verified"
-assert_jq_eq '.verified_by.id' "$PHARMACIST" "the pharmacist is recorded as the verifier"
-assert_jq_eq '.operator.id' "$TECH" "the technician is still the operator"
+assert_jq_eq '.verified_by.email' "$PHARMACIST_EMAIL" "the pharmacist is recorded as the verifier"
+assert_jq_eq '.operator.email' "$TECH_EMAIL" "the technician is still the operator"
 assert_jq_eq '.dispensed_at' 'null' "verifying does not dispense"
 
 section "a whole fill: completing it"
@@ -191,7 +182,7 @@ assert_status 200 "the completion is accepted"
 assert_jq_eq '.status' 'completed' "the fill is now completed"
 assert_jq '.dispensed_at != null' "it is stamped with the dispensing time"
 assert_jq_eq '.quantity_dispensed' '30' "thirty tablets went out the door"
-assert_jq_eq '.verified_by.id' "$PHARMACIST" "the verifier is still recorded"
+assert_jq_eq '.verified_by.email' "$PHARMACIST_EMAIL" "the verifier is still recorded"
 
 when "the completed fill is completed again"
 req_staff "$PHARMACIST" POST "/fills/${FILL}/complete/"
@@ -249,14 +240,14 @@ assert_jq_eq '.sequence' '1' "it is the first fill on this prescription"
 assert_jq_eq '.quantity_dispensed' '15' "it is for fifteen tablets"
 assert_jq_eq '.days_supply' '15' "half the quantity is half the days' supply"
 assert_jq_eq '.is_partial' 'true' "it is flagged as a partial fill"
-assert_jq_eq '.operator.id' "$TECH" "the technician is recorded as the operator"
+assert_jq_eq '.operator.email' "$TECH_EMAIL" "the technician is recorded as the operator"
 PARTIAL_FILL="$(jqv .id)"
 
 when "the pharmacist verifies the partial fill"
 req_staff "$PHARMACIST" POST "/fills/${PARTIAL_FILL}/verify/"
 assert_status 200 "the verification is accepted"
 assert_jq_eq '.status' 'verified' "the fill is now verified"
-assert_jq_eq '.verified_by.id' "$PHARMACIST" "the pharmacist is recorded as the verifier"
+assert_jq_eq '.verified_by.email' "$PHARMACIST_EMAIL" "the pharmacist is recorded as the verifier"
 assert_jq_eq '.is_partial' 'true' "it is still a partial fill"
 
 when "the partial fill is completed"

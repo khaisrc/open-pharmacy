@@ -1,21 +1,27 @@
 """The fill workflow: /prescriptions/{id}/fills/ and its four transitions."""
 
-import threading
-
 import pytest
 from django.db import connection
 from rest_framework.test import APIClient
 
+from pharmacy.auth.scopes import ALL_SCOPES
 from pharmacy.models import Fill, FillStatus, PrescriptionStatus, RxCounter
 
-from .conftest import with_staff
+from .conftest import as_staff
 from .factories import (
     FillFactory,
     PharmacyLocationFactory,
     PrescriptionFactory,
-    StaffFactory,
 )
-from .helpers import FILLS, PRESCRIPTIONS, dispense, fills_url, prescription_body, start_fill
+from .helpers import (
+    FILLS,
+    PRESCRIPTIONS,
+    dispense,
+    fills_url,
+    prescription_body,
+    race,
+    start_fill,
+)
 
 pytestmark = pytest.mark.django_db
 MISSING = "00000000-0000-4000-8000-000000000000"
@@ -25,55 +31,55 @@ def transition(client, prescription, fill, action):
     return client.post(fills_url(prescription, fill, action))
 
 
-class TestStaffHeader:
-    """X-Staff-Id names the person acting. Optional on most writes, ignored
-    on reads, required where a fill needs a person."""
+class TestWhoActs:
+    """A fill names the person who started and verified it, so those two
+    writes take a bearer token that maps to a staff member; a login (Basic
+    or session) can do everything else."""
 
-    def test_create_without_a_header_is_400(self, api, prescription):
+    def test_create_as_a_login_is_403(self, api, prescription):
         response = start_fill(api, prescription)
-        assert response.status_code == 400
-        assert response.data["error"]["code"] == "staff_required"
+        assert response.status_code == 403
+        assert response.data["error"]["code"] == "staff_identity_required"
         assert not Fill.objects.exists()
 
-    @pytest.mark.parametrize(
-        "value",
-        ["not-a-uuid", MISSING, "deleted", "inactive"],
-        ids=["malformed", "unknown", "deleted", "inactive"],
-    )
-    def test_a_header_that_names_nobody_is_400(self, api, prescription, value):
-        if value == "deleted":
-            staff = StaffFactory()
-            staff.delete()
-            value = str(staff.pk)
-        elif value == "inactive":
-            value = str(StaffFactory(is_active=False).pk)
-        api.credentials(HTTP_X_STAFF_ID=value)
-        response = start_fill(api, prescription)
-        assert response.status_code == 400
-        assert response.data["error"]["code"] == "invalid_staff"
-        assert response.data["error"]["details"]["value"] == value
+    def test_verify_as_a_login_is_403(self, api, fill):
+        response = transition(api, fill.prescription, fill, "verify")
+        assert response.status_code == 403
+        assert response.data["error"]["code"] == "staff_identity_required"
 
-    def test_a_bad_header_is_ignored_on_a_read(self, api, fill):
-        api.credentials(HTTP_X_STAFF_ID="not-a-uuid")
-        assert api.get(fills_url(fill.prescription)).status_code == 200
-        assert api.get(fills_url(fill.prescription, fill)).status_code == 200
-
-    def test_verify_needs_a_pharmacist(self, as_technician, fill):
+    def test_verify_needs_the_scope(self, as_technician, fill):
         response = transition(as_technician, fill.prescription, fill, "verify")
-        assert response.status_code == 400
+        assert response.status_code == 403
+        assert response.data["error"]["code"] == "insufficient_scope"
+        assert response.data["error"]["details"]["required"] == ["fills:verify"]
+        fill.refresh_from_db()
+        assert fill.status == FillStatus.PENDING
+
+    def test_an_admin_who_is_not_a_pharmacist_cannot_verify(self, identity, fill):
+        admin = identity(roles=("admin",), pharmacy=None)
+        response = transition(admin.bearer(APIClient()), fill.prescription, fill, "verify")
+        assert response.status_code == 403
         assert response.data["error"]["code"] == "pharmacist_required"
         fill.refresh_from_db()
         assert fill.status == FillStatus.PENDING
 
-    def test_verify_without_a_header_is_400(self, api, fill):
-        response = transition(api, fill.prescription, fill, "verify")
-        assert response.status_code == 400
-        assert response.data["error"]["code"] == "staff_required"
+    def test_the_verify_scope_alone_does_not_make_a_pharmacist(self, technician, fill):
+        client = as_staff(APIClient(), technician, scopes=ALL_SCOPES)
+        response = transition(client, fill.prescription, fill, "verify")
+        assert response.status_code == 403
+        assert response.data["error"]["code"] == "pharmacist_required"
 
-    def test_operator_is_whoever_the_header_names(self, as_technician, technician, prescription):
+    def test_an_admin_who_is_a_pharmacist_can_verify(self, identity, fill):
+        ident = identity(roles=("admin", "pharmacist"))
+        response = transition(ident.bearer(APIClient()), fill.prescription, fill, "verify")
+        assert response.status_code == 200
+        assert response.data["verified_by"]["email"] == ident.claims["email"]
+
+    def test_operator_is_whoever_the_token_is_for(self, as_technician, technician, prescription):
         response = start_fill(as_technician, prescription)
         assert response.status_code == 201
         assert response.data["operator"]["id"] == str(technician.pk)
+        assert response.data["operator"]["email"] == technician.email
 
 
 class TestCreate:
@@ -348,37 +354,13 @@ class TestConcurrency:
         if connection.vendor != "postgresql":
             pytest.skip("select_for_update is only exercised on PostgreSQL")
 
-    @staticmethod
-    def race(workers):
-        """Run each callable in its own thread, started together, returning
-        their results in order. Each thread closes its own connection so the
-        test database can be torn down."""
-        barrier = threading.Barrier(len(workers))
-        results = [None] * len(workers)
-
-        def run(index, work):
-            try:
-                barrier.wait()
-                results[index] = work()
-            finally:
-                connection.close()
-
-        threads = [threading.Thread(target=run, args=(i, w)) for i, w in enumerate(workers)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-        return results
-
     def test_two_fills_against_the_last_quantity(self, user, pharmacist):
         rx = PrescriptionFactory(fills_authorized=1)
 
         def start():
-            client = with_staff(APIClient(), pharmacist)
-            client.force_authenticate(user=user)
-            return start_fill(client, rx)
+            return start_fill(as_staff(APIClient(), pharmacist), rx)
 
-        responses = self.race([start, start])
+        responses = race([start, start])
         assert sorted(r.status_code for r in responses) == [201, 409]
         refused = next(r for r in responses if r.status_code == 409)
         assert refused.data["error"]["code"] == "fill_in_progress"
@@ -396,7 +378,7 @@ class TestConcurrency:
                 format="json",
             )
 
-        responses = self.race([create, create])
+        responses = race([create, create])
         assert [r.status_code for r in responses] == [201, 201]
         assert sorted(r.data["rx_number"] for r in responses) == [1, 2]
         assert RxCounter.objects.get(pharmacy=location.pharmacy).last_issued == 2

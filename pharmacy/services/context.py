@@ -1,14 +1,14 @@
 """Who is writing, and from where.
 
 Every service write takes a `WriteContext` first. It is built once per
-request by the base viewset and carried down so the layers below the view
-never touch the request object; tests that call a service directly build one
-by hand.
+request by the base viewset (and by the admin) and carried down so the
+layers below the view never touch the request object; tests that call a
+service directly build one by hand.
 
-`staff` is the person acting, as distinct from `user`, the login: there is
-no link between the two, so the request names the person in the X-Staff-Id
-header. When a JWT carries staff identity later, this is the one place that
-changes.
+`principal` is who the credential says is acting. A bearer token names a
+`Staff` row (`staff`); a Django session or Basic credential names a login
+(`user`). Exactly one of the two is set, and the change history records
+whichever it is.
 """
 
 from dataclasses import dataclass
@@ -16,17 +16,23 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class WriteContext:
-    user: object
-    staff: object = None
+    principal: object
     path: str = ""
     method: str = ""
     request_id: str = ""
 
+    @property
+    def staff(self):
+        return getattr(self.principal, "staff", None)
+
+    @property
+    def user(self):
+        return getattr(self.principal, "django_user", None)
+
     @classmethod
-    def from_request(cls, request, staff=None):
+    def from_request(cls, request, principal):
         return cls(
-            user=request.user,
-            staff=staff,
+            principal=principal,
             path=request.path,
             method=request.method,
             request_id=getattr(request, "request_id", ""),

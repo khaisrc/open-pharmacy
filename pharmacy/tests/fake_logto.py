@@ -1,0 +1,262 @@
+"""A fake of the identity provider's HTTP surface, for seed_auth and
+auth_token.
+
+It answers the dozen endpoints those commands use the way Logto does
+(verified against a running instance; the shapes are recorded here), keeps
+state across calls, signs real tokens with its own key, and lets a test see
+what was created. The `fake_logto` fixture in conftest serves it.
+"""
+
+import json
+import re
+import threading
+import time
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+import jwt
+
+from pharmacy.auth import claims as c
+from pharmacy.auth.scopes import scopes_for_roles
+
+from .tokens import TokenIssuer
+
+
+class FakeLogto:
+    """State: admin users, resources with scopes, roles with scopes, the
+    customizer; and a log of every write."""
+
+    def __init__(self):
+        self.users = {}  # admin tenant: username -> password
+        self.resources = {}
+        self.scopes = {}
+        self.roles = {}
+        self.role_scopes = {}
+        self.customizer = None
+        self.applications = {}
+        self.tenant_users = {}  # default tenant: id -> user record
+        self.user_roles = {}
+        self.writes = []
+        self.consented = False
+        self.issuer = TokenIssuer(kid="fake-logto")
+        self._ids = iter(range(1, 10_000))
+
+    def new_id(self):
+        return f"id{next(self._ids)}"
+
+    def token_for(self, user, audience, scope):
+        """What the customizer would make of this user: the contract from
+        the user's fields and customData, plus the roles held."""
+        roles = [self.roles[r]["name"] for r in self.user_roles.get(user["id"], [])]
+        granted = scopes_for_roles(roles)
+        asked = set(scope.split())
+        claims = {
+            "sub": user["id"],
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 900,
+            "iss": "http://localhost:8441/oidc",
+            "aud": audience,
+            "scope": " ".join(sorted(str(s) for s in granted & asked)),
+            c.EMAIL: user["primaryEmail"],
+            c.NAME: user["name"],
+            c.GIVEN_NAME: user["profile"]["givenName"],
+            c.FAMILY_NAME: user["profile"]["familyName"],
+            c.ROLES: roles,
+            **user["customData"],
+        }
+        return jwt.encode(
+            claims, self.issuer.private_key, algorithm="ES384", headers={"kid": "fake-logto"}
+        )
+
+
+def make_handler(state):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def body(self):
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b""
+            kind = self.headers.get("Content-Type") or ""
+            if "json" in kind:
+                return json.loads(raw or b"{}")
+            return dict(urllib.parse.parse_qsl(raw.decode())) if raw else {}
+
+        def send(self, status, payload=None, location=None):
+            self.send_response(status)
+            if location:
+                self.send_header("Location", location)
+            if payload is not None:
+                data = json.dumps(payload).encode()
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+        def do_GET(self):
+            path, _, query = self.path.partition("?")
+            if path == "/api/status":
+                return self.send(204)
+            if path == "/oidc/auth":
+                assert "client_id=admin-console" in query
+                return self.send(303, location="/sign-in")
+            if path.startswith("/oidc/auth/"):
+                if not state.consented:
+                    return self.send(
+                        303, location="http://localhost:8442/consent?app_id=admin-console"
+                    )
+                return self.send(
+                    303, location="http://localhost:8442/console/callback?code=thecode"
+                )
+            if path == "/api/resources":
+                return self.send(200, list(state.resources.values()))
+            if path.startswith("/api/resources/") and path.endswith("/scopes"):
+                rid = path.split("/")[3]
+                return self.send(200, [s for s in state.scopes.values() if s["resourceId"] == rid])
+            if path == "/oidc/.well-known/openid-configuration":
+                return self.send(200, {"jwks_uri": "http://localhost:8441/oidc/jwks"})
+            if path == "/oidc/jwks":
+                return self.send(200, state.issuer.jwks())
+            if path == "/api/applications":
+                return self.send(200, list(state.applications.values()))
+            if path == "/api/users":
+                params = urllib.parse.parse_qs(query)
+                wanted = {
+                    field: params[f"search.{field}"][0]
+                    for field in ("primaryEmail", "username")
+                    if f"search.{field}" in params
+                }
+                return self.send(
+                    200,
+                    [
+                        u
+                        for u in state.tenant_users.values()
+                        if all(u[field] == value for field, value in wanted.items())
+                    ],
+                )
+            if re.fullmatch(r"/api/users/[^/]+/roles", path):
+                uid = path.split("/")[3]
+                return self.send(200, [state.roles[r] for r in state.user_roles.get(uid, [])])
+            if path == "/api/roles":
+                return self.send(200, list(state.roles.values()))
+            if path.startswith("/api/roles/") and path.endswith("/scopes"):
+                rid = path.split("/")[3]
+                return self.send(200, [state.scopes[s] for s in state.role_scopes.get(rid, [])])
+            self.send(404, {"path": path})
+
+        def do_PATCH(self):
+            body = self.body()
+            if self.path.startswith("/api/applications/"):
+                app = state.applications[self.path.split("/")[3]]
+                app.setdefault("customClientMetadata", {}).update(body["customClientMetadata"])
+                state.writes.append(("application-patch", app["name"]))
+                return self.send(200, app)
+            if self.path.startswith("/api/users/"):
+                user = state.tenant_users[self.path.split("/")[3]]
+                user.update(body)
+                state.writes.append(("user-patch", user["username"]))
+                return self.send(200, user)
+            self.send(404)
+
+        def do_PUT(self):
+            if self.path == "/api/experience":
+                return self.send(204)
+            if self.path == "/api/configs/jwt-customizer/access-token":
+                state.customizer = self.body()
+                state.writes.append(("customizer",))
+                return self.send(200, state.customizer)
+            self.send(404)
+
+        def do_POST(self):
+            path = self.path
+            body = self.body()
+            if path == "/api/experience/verification/new-password-identity":
+                name = body["identifier"]["value"]
+                if name in state.users:
+                    return self.send(422, {"code": "user.username_already_in_use"})
+                state.pending = (name, body["password"])
+                return self.send(200, {"verificationId": "v1"})
+            if path == "/api/experience/verification/password":
+                name = body["identifier"]["value"]
+                if state.users.get(name) != body["password"]:
+                    return self.send(422, {"code": "session.invalid_credentials"})
+                return self.send(200, {"verificationId": "v2"})
+            if path == "/api/experience/identification":
+                return self.send(201)
+            if path == "/api/experience/submit":
+                if getattr(state, "pending", None):
+                    name, password = state.pending
+                    state.users[name] = password
+                    state.writes.append(("user", name))
+                    state.pending = None
+                return self.send(200, {"redirectTo": "http://localhost:8442/oidc/auth/abc"})
+            if path == "/api/interaction/consent":
+                state.consented = True
+                return self.send(200, {"redirectTo": "http://localhost:8442/oidc/auth/abc"})
+            if path == "/oidc/token" and body["grant_type"] == "authorization_code":
+                assert body["code"] == "thecode" and body["code_verifier"]
+                return self.send(200, {"access_token": "mgmt-token", "token_type": "Bearer"})
+            if path == "/oidc/token":
+                assert body["grant_type"].endswith("token-exchange")
+                assert body["client_id"] in state.applications
+                uid = body["subject_token"].removeprefix("subject-for-")
+                token = state.token_for(state.tenant_users[uid], body["resource"], body["scope"])
+                return self.send(200, {"access_token": token, "token_type": "Bearer"})
+            if self.headers.get("Authorization") != "Bearer mgmt-token":
+                return self.send(401, {"code": "auth.unauthorized"})
+            if path == "/api/resources":
+                rid = state.new_id()
+                state.resources[rid] = {"id": rid, **body, "scopes": []}
+                state.writes.append(("resource", body["indicator"]))
+                return self.send(201, state.resources[rid])
+            if path.startswith("/api/resources/") and path.endswith("/scopes"):
+                rid = path.split("/")[3]
+                sid = state.new_id()
+                state.scopes[sid] = {"id": sid, "resourceId": rid, **body}
+                state.writes.append(("scope", body["name"]))
+                return self.send(201, state.scopes[sid])
+            if path == "/api/roles":
+                rid = state.new_id()
+                state.roles[rid] = {"id": rid, "name": body["name"], "type": body["type"]}
+                state.role_scopes[rid] = list(body["scopeIds"])
+                state.writes.append(("role", body["name"]))
+                return self.send(201, state.roles[rid])
+            if path.startswith("/api/roles/") and path.endswith("/scopes"):
+                rid = path.split("/")[3]
+                state.role_scopes[rid] += body["scopeIds"]
+                state.writes.append(("role-scopes", state.roles[rid]["name"]))
+                return self.send(201, {"scopeIds": body["scopeIds"]})
+            if path == "/api/applications":
+                aid = state.new_id()
+                state.applications[aid] = {"id": aid, **body}
+                state.writes.append(("application", body["name"]))
+                return self.send(201, state.applications[aid])
+            if path == "/api/users":
+                uid = state.new_id()
+                state.tenant_users[uid] = {"id": uid, **body}
+                state.writes.append(("tenant-user", body["username"]))
+                return self.send(201, state.tenant_users[uid])
+            if re.fullmatch(r"/api/users/[^/]+/roles", path):
+                uid = path.split("/")[3]
+                state.user_roles.setdefault(uid, []).extend(body["roleIds"])
+                state.writes.append(("user-roles", state.tenant_users[uid]["username"]))
+                return self.send(201, {"roleIds": body["roleIds"]})
+            if path == "/api/subject-tokens":
+                return self.send(
+                    201, {"subjectToken": f"subject-for-{body['userId']}", "expiresIn": 600}
+                )
+            self.send(404, {"path": path})
+
+    return Handler
+
+
+def serve():
+    """A running fake on a free port, and a function that stops it."""
+    state = FakeLogto()
+    server = HTTPServer(("127.0.0.1", 0), make_handler(state))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    state.url = f"http://127.0.0.1:{server.server_port}"
+    return state, server.shutdown

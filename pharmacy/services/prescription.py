@@ -1,8 +1,9 @@
 from django.db import transaction
 
 from pharmacy import repositories
-from pharmacy.exceptions import Conflict
-from pharmacy.models import PrescriptionStatus
+from pharmacy.auth.scopes import Scope
+from pharmacy.exceptions import Conflict, InsufficientScope
+from pharmacy.models import FILL_IN_FLIGHT_STATUSES, FillStatus, PrescriptionStatus
 
 from . import history, rx_number
 from .base import CrudService
@@ -29,6 +30,16 @@ class PrescriptionService(CrudService):
             fields["rx_number"] = rx_number.next_rx_number(pharmacy)
             return super().create(ctx, **fields)
 
+    def update(self, ctx, instance, **fields):
+        with transaction.atomic():
+            self._refuse_if_update_needs_more_scope(ctx, self.repository.get_locked(instance.pk))
+            return super().update(ctx, instance, **fields)
+
+    def delete(self, ctx, instance):
+        with transaction.atomic():
+            self._refuse_if_update_needs_more_scope(ctx, self.repository.get_locked(instance.pk))
+            super().delete(ctx, instance)
+
     def expire_if_due(self, ctx, pk):
         """Record a lapsed expiry before an update is validated, so a lapsed
         prescription is refused as terminal rather than moved to on_hold.
@@ -41,6 +52,7 @@ class PrescriptionService(CrudService):
         # here as 'completed' rather than overwritten with 'cancelled'.
         with transaction.atomic():
             prescription = self.repository.get_locked(pk)
+            self._refuse_if_update_needs_more_scope(ctx, prescription)
             self._expire_if_due(ctx, prescription)
             in_flight = repositories.fills.in_flight(prescription)
             if prescription.is_terminal:
@@ -72,6 +84,35 @@ class PrescriptionService(CrudService):
             self._set_status(ctx, prescription, PrescriptionStatus.COMPLETED)
             return True
         return False
+
+    @staticmethod
+    def _refuse_if_update_needs_more_scope(ctx, prescription):
+        """The one state-dependent permission in the system. A principal
+        holding prescriptions:update_unfilled but not prescriptions:update
+        may change a prescription only while no fill has been started -- a
+        cancelled fill does not count, nothing was dispensed or reserved.
+        Keyed on the scopes held, never on a role. Under the lock, like every
+        rule that reads the fills."""
+        scopes = getattr(ctx.principal, "scopes", frozenset())
+        if (
+            Scope.PRESCRIPTIONS_UPDATE in scopes
+            or Scope.PRESCRIPTIONS_UPDATE_UNFILLED not in scopes
+        ):
+            return
+        started = [
+            fill
+            for fill in prescription.fills.all()
+            if fill.status in FILL_IN_FLIGHT_STATUSES or fill.status == FillStatus.COMPLETED
+        ]
+        if started:
+            raise InsufficientScope(
+                "A fill has been started on this prescription; changing it now takes "
+                "prescriptions:update.",
+                details={
+                    "required": [str(Scope.PRESCRIPTIONS_UPDATE)],
+                    "reason": "a fill has been started",
+                },
+            )
 
     def _expire_if_due(self, ctx, prescription):
         """Record a lapsed expiry; returns True when the status changed.

@@ -11,6 +11,7 @@ from django.contrib import admin, messages
 from django.http import HttpResponseRedirect
 from rest_framework.exceptions import ValidationError
 
+from pharmacy.auth import Principal
 from pharmacy.exceptions import ApiError
 from pharmacy.services import WriteContext
 
@@ -33,14 +34,9 @@ class ServiceModelAdmin(admin.ModelAdmin):
     service = None
 
     def ctx(self, request):
-        # No staff member: the admin identifies a login, and the change
-        # history records it as such.
-        return WriteContext(
-            user=request.user,
-            path=request.path,
-            method=request.method,
-            request_id=getattr(request, "request_id", ""),
-        )
+        # A login, not a staff member: the change history records the Django
+        # user, and a fill cannot be started or verified from here.
+        return WriteContext.from_request(request, Principal.from_django_user(request.user))
 
     def get_queryset(self, request):
         queryset = self.repository.all()

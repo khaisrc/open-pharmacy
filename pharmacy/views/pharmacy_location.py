@@ -2,6 +2,7 @@ from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework.decorators import action
 
 from pharmacy import repositories, services
+from pharmacy.auth.scopes import Scope, crud_scopes
 from pharmacy.filters import PharmacyLocationFilter
 from pharmacy.serializers import PharmacyLocationSerializer, PrescriptionSerializer
 
@@ -9,8 +10,14 @@ from .base import PharmacyScopedViewSet, nested_list
 from .prescription import PrescriptionViewSet
 from .tags import PHARMACY_ID, tagged
 
+SCOPES = crud_scopes(Scope.LOCATIONS_READ, Scope.LOCATIONS_WRITE) | {
+    "prescriptions": {Scope.PRESCRIPTIONS_READ},
+}
 
-@extend_schema_view(**tagged("Pharmacy Locations", "prescriptions", parameters=[PHARMACY_ID]))
+
+@extend_schema_view(
+    **tagged("Pharmacy Locations", "prescriptions", parameters=[PHARMACY_ID], scopes=SCOPES)
+)
 class PharmacyLocationViewSet(PharmacyScopedViewSet):
     """Nested under the owning pharmacy only. Cross-pharmacy questions about
     prescriptions still go through /prescriptions/?pharmacy= and
@@ -18,6 +25,7 @@ class PharmacyLocationViewSet(PharmacyScopedViewSet):
 
     repository = repositories.pharmacy_locations
     service = services.pharmacy_locations
+    required_scopes = SCOPES
     serializer_class = PharmacyLocationSerializer
     filterset_class = PharmacyLocationFilter
     search_fields = ["store_number", "ncpdp_id"]

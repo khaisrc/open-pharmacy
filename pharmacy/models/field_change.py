@@ -27,8 +27,14 @@ class FieldChange(models.Model):
     old_value = models.JSONField(null=True)
     new_value = models.JSONField(null=True)
     changed_at = models.DateTimeField(auto_now_add=True)
+    # Exactly one of the two: a bearer token names a staff member, a Django
+    # session or Basic credential names a login.
     changed_by_user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="field_changes"
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="field_changes",
     )
     changed_by_staff = models.ForeignKey(
         "pharmacy.Staff",
@@ -44,6 +50,13 @@ class FieldChange(models.Model):
 
     class Meta:
         ordering = ["changed_at"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(changed_by_user__isnull=False, changed_by_staff__isnull=True)
+                | models.Q(changed_by_user__isnull=True, changed_by_staff__isnull=False),
+                name="field_change_one_actor",
+            )
+        ]
         indexes = [
             models.Index(fields=["model", "record_id", "changed_at"]),
             models.Index(fields=["request_id"]),

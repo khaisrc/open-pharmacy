@@ -13,7 +13,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from pharmacy import repositories
-from pharmacy.exceptions import Conflict, InvalidRequest
+from pharmacy.exceptions import Conflict, InsufficientScope
 from pharmacy.models import FILL_TRANSITIONS, FillStatus, PrescriptionStatus, StaffRole
 
 from . import history
@@ -74,12 +74,15 @@ class FillService(CrudService):
             return super().update(ctx, fill, **fields)
 
     def verify(self, ctx, fill):
+        # The fills:verify scope is checked before this runs. The verifier
+        # must also be a pharmacist: an admin holds every scope but is not
+        # one unless the pharmacist role is among its roles.
         staff = self._require_staff(ctx)
-        if staff.role != StaffRole.PHARMACIST:
-            raise InvalidRequest(
+        if StaffRole.PHARMACIST not in staff.all_roles:
+            raise InsufficientScope(
                 "Only a pharmacist can verify a fill.",
                 code="pharmacist_required",
-                details={"staff_id": str(staff.pk), "role": staff.role},
+                details={"staff_id": str(staff.pk), "roles": sorted(staff.all_roles)},
             )
         return self._transition(ctx, fill, "verify", verified_by=staff)
 
@@ -199,9 +202,13 @@ class FillService(CrudService):
 
     @staticmethod
     def _require_staff(ctx):
+        """A fill names the person who started or verified it, so these two
+        writes need a token that maps to a staff member; a Django session or
+        Basic credential is a login, not a person."""
         if ctx.staff is None:
-            raise InvalidRequest(
-                "This write must name the staff member performing it in the X-Staff-Id header.",
-                code="staff_required",
+            raise InsufficientScope(
+                "Starting or verifying a fill must be done as a staff member: "
+                "authenticate with a bearer token.",
+                code="staff_identity_required",
             )
         return ctx.staff

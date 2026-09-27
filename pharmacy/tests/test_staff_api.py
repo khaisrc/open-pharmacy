@@ -113,7 +113,8 @@ class TestCreateAndRead:
         assert response.status_code == 404
         assert api.get(staff_url(pharmacist.pharmacy, pharmacist)).status_code == 200
 
-    def test_soft_delete_hides_but_keeps_the_row(self, api, pharmacist):
+    def test_soft_delete_hides_but_keeps_the_row(self, api):
+        pharmacist = StaffFactory()
         assert api.delete(staff_url(pharmacist.pharmacy, pharmacist)).status_code == 204
         assert api.get(staff_url(pharmacist.pharmacy, pharmacist)).status_code == 404
         assert Staff.all_objects.filter(pk=pharmacist.pk).exists()
@@ -292,7 +293,8 @@ class TestListing:
 
 
 class TestDeleteGuards:
-    def test_pharmacist_in_charge_cannot_be_deleted(self, api, pharmacist):
+    def test_pharmacist_in_charge_cannot_be_deleted(self, api):
+        pharmacist = StaffFactory()
         location = PharmacyLocationFactory(
             pharmacy=pharmacist.pharmacy, pharmacist_in_charge=pharmacist
         )
@@ -305,14 +307,16 @@ class TestDeleteGuards:
         location.save()
         assert api.delete(staff_url(pharmacist.pharmacy, pharmacist)).status_code == 204
 
-    def test_deletable_once_the_location_is_gone(self, api, pharmacist):
+    def test_deletable_once_the_location_is_gone(self, api):
+        pharmacist = StaffFactory()
         location = PharmacyLocationFactory(
             pharmacy=pharmacist.pharmacy, pharmacist_in_charge=pharmacist
         )
         location.delete()
         assert api.delete(staff_url(pharmacist.pharmacy, pharmacist)).status_code == 204
 
-    def test_pharmacy_with_live_staff_is_409(self, api, pharmacist):
+    def test_pharmacy_with_live_staff_is_409(self, api):
+        pharmacist = StaffFactory()
         response = api.delete(f"/api/v1/pharmacies/{pharmacist.pharmacy.pk}/")
         assert response.status_code == 409
         assert response.data["error"]["code"] == "referenced"
@@ -320,3 +324,45 @@ class TestDeleteGuards:
 
         api.delete(staff_url(pharmacist.pharmacy, pharmacist))
         assert api.delete(f"/api/v1/pharmacies/{pharmacist.pharmacy.pk}/").status_code == 204
+
+
+class TestIdentityRows:
+    """A row that came from a Logto token is that identity's record: the
+    staff API shows it, and may change only is_active."""
+
+    def test_reads_back_the_token_identity(self, api, pharmacist):
+        body = api.get(staff_url(pharmacist.pharmacy, pharmacist)).data
+        assert body["is_external"] is True
+        assert body["external_user_id"] == pharmacist.identity.external_user_id
+        assert body["email"] == pharmacist.identity.claims["email"]
+        assert body["roles"] == ["pharmacist"]
+
+    @pytest.mark.parametrize("method", ["patch", "delete"])
+    def test_identity_is_read_only(self, api, pharmacist, method):
+        url = staff_url(pharmacist.pharmacy, pharmacist)
+        response = (
+            api.patch(url, {"last_name": "Changed"}, format="json")
+            if method == "patch"
+            else api.delete(url)
+        )
+        assert response.status_code == 409
+        assert response.data["error"]["code"] == "identity_managed_externally"
+        pharmacist.refresh_from_db()
+        assert pharmacist.deleted is None and pharmacist.last_name != "Changed"
+
+    def test_is_active_is_still_local(self, api, pharmacist):
+        response = api.patch(
+            staff_url(pharmacist.pharmacy, pharmacist), {"is_active": False}, format="json"
+        )
+        assert response.status_code == 200
+        assert response.data["is_active"] is False
+
+    def test_hand_typed_rows_hold_one_role(self, api, pharmacy):
+        response = api.post(
+            staff_url(pharmacy),
+            {"first_name": "A", "last_name": "B", "role": "technician"},
+            format="json",
+        )
+        assert response.status_code == 201
+        assert response.data["roles"] == ["technician"]
+        assert response.data["is_external"] is False

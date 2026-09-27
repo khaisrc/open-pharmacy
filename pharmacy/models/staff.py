@@ -1,9 +1,17 @@
-"""A credentialed person working at a pharmacy.
+"""A credentialed person working at a pharmacy, and the identity a token names.
 
 This is the domain record a state board can look up -- the person whose name
-a transfer record names -- and it is deliberately separate from auth.User,
-which is an operator credential: a way to sign in, not a person. Nothing
-here links the two.
+a transfer record names. It is also the identity record for the API: a
+bearer token's first appearance inserts a row carrying
+`external_user_id` (the token's subject) and what the token says about the
+person, and that row is never updated from a token again. Identity per
+subject is immutable by policy -- a change of email, name, role or
+registration is a new user at the identity provider -- and `services.staff` refuses a token
+whose claims no longer match its row. A row without `external_user_id` is a
+directory entry typed in by hand; it can be named, but it cannot act.
+
+Deliberately separate from auth.User, which is a way to sign into the Django
+admin, not a person. Nothing links the two.
 """
 
 from django.core.exceptions import ValidationError
@@ -16,10 +24,33 @@ from .base import TimeStampedModel
 
 
 class StaffRole(models.TextChoices):
+    ADMIN = "admin", "Administrator"
     PHARMACIST = "pharmacist", "Pharmacist"
     CERTIFIED_TECHNICIAN = "certified_technician", "Certified pharmacy technician"
     TECHNICIAN = "technician", "Pharmacy technician"
     INTERN = "intern", "Pharmacy intern"
+
+
+# A person may hold several roles at the identity provider; the first they hold is
+# the one `Staff.role` records and the rules key on. An admin is a superuser
+# employed by no particular pharmacy.
+ROLE_PRECEDENCE = [
+    StaffRole.ADMIN,
+    StaffRole.PHARMACIST,
+    StaffRole.CERTIFIED_TECHNICIAN,
+    StaffRole.TECHNICIAN,
+    StaffRole.INTERN,
+]
+# Roles that may supervise an intern.
+SUPERVISING_ROLES = frozenset(
+    {StaffRole.PHARMACIST, StaffRole.CERTIFIED_TECHNICIAN, StaffRole.TECHNICIAN}
+)
+
+
+def highest_role(roles):
+    """The role `Staff.role` records for a set of roles, or None if none is
+    a StaffRole."""
+    return next((role for role in ROLE_PRECEDENCE if role in roles), None)
 
 
 class CertificationBody(models.TextChoices):
@@ -49,12 +80,20 @@ class Staff(TimeStampedModel):
     that should never have existed.
     """
 
+    # The token subject this row was created from, and the email it carried.
+    # Blank on a row typed in by hand.
+    external_user_id = models.CharField(max_length=255, blank=True)
+    email = models.EmailField(blank=True)
     first_name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100)
     middle_name = models.CharField(max_length=100, blank=True)
     # A name component (Jr., III), never a credential; role carries that.
     suffix = models.CharField(max_length=20, blank=True)
+    # `role` is the highest by ROLE_PRECEDENCE of `roles`, the full list the
+    # token carried (a hand-typed row has a one-element list). The column is
+    # kept because filters and the rules below key on it.
     role = models.CharField(max_length=24, choices=StaffRole.choices)
+    roles = models.JSONField(default=list, blank=True)
     # The state board registration: both halves or neither, since a number
     # without its issuer is not something a board can look up.
     registration_state = models.CharField(max_length=2, blank=True, validators=[validate_us_state])
@@ -65,9 +104,14 @@ class Staff(TimeStampedModel):
     certification_number = models.CharField(max_length=32, blank=True)
     npi = models.CharField(max_length=10, blank=True, validators=[validate_npi])
     # The employer is the organization, not a site: a chain's technician
-    # floats between its stores.
+    # floats between its stores. Null only for an admin, who works at none
+    # in particular; clean() holds everyone else to it.
     pharmacy = models.ForeignKey(
-        "pharmacy.Pharmacy", on_delete=models.PROTECT, related_name="staff"
+        "pharmacy.Pharmacy",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="staff",
     )
     is_active = models.BooleanField(default=True)
 
@@ -75,18 +119,29 @@ class Staff(TimeStampedModel):
         abstract = False
         verbose_name_plural = "staff"
         constraints = [
-            # Partial on both counts: a soft-deleted record must not hold a
-            # registration against a live one, and the unregistered must never
-            # collide with each other.
+            # Partial: over live, active rows, and never over blanks. Active
+            # rather than live so that a successor identity -- the new
+            # user created when a person's details change -- can hold the
+            # registration, NPI or email once the old row is deactivated.
             models.UniqueConstraint(
                 fields=["registration_state", "registration_number"],
-                condition=Q(deleted__isnull=True) & ~Q(registration_number=""),
+                condition=Q(deleted__isnull=True, is_active=True) & ~Q(registration_number=""),
                 name="uniq_live_staff_registration",
             ),
             models.UniqueConstraint(
                 fields=["npi"],
-                condition=Q(deleted__isnull=True) & ~Q(npi=""),
+                condition=Q(deleted__isnull=True, is_active=True) & ~Q(npi=""),
                 name="uniq_live_staff_npi",
+            ),
+            models.UniqueConstraint(
+                fields=["external_user_id"],
+                condition=Q(deleted__isnull=True) & ~Q(external_user_id=""),
+                name="uniq_live_staff_external_user_id",
+            ),
+            models.UniqueConstraint(
+                fields=["email"],
+                condition=Q(deleted__isnull=True, is_active=True) & ~Q(email=""),
+                name="uniq_live_staff_email",
             ),
         ]
         indexes = [models.Index(fields=["last_name", "first_name"])]
@@ -96,6 +151,15 @@ class Staff(TimeStampedModel):
         parts = [self.first_name, self.middle_name, self.last_name, self.suffix]
         return " ".join(part for part in parts if part)
 
+    @property
+    def is_external(self):
+        """Created from a token, so owned by the identity provider: read-only here."""
+        return bool(self.external_user_id)
+
+    @property
+    def all_roles(self):
+        return set(self.roles or [self.role])
+
     def clean(self):
         super().clean()
         problems = credential_problems(
@@ -104,6 +168,7 @@ class Staff(TimeStampedModel):
             self.registration_number,
             self.certification_body,
             self.certification_number,
+            pharmacy_id=self.pharmacy_id,
         )
         if problems:
             raise ValidationError(problems)
@@ -121,14 +186,23 @@ class Staff(TimeStampedModel):
         return f"{self.full_name} ({self.get_role_display()})"
 
 
-def credential_problems(role, registration_state, registration_number, body, certification):
+# "Not passed": the serializer takes the employer from the URL and does not
+# check it here; the model and the token registration do.
+UNCHECKED = object()
+
+
+def credential_problems(
+    role, registration_state, registration_number, body, certification, *, pharmacy_id=UNCHECKED
+):
     """Field errors for a role's credentials, keyed like a serializer's.
 
-    Shared by Staff.clean() and the serializer so the two cannot disagree. A
-    half-filled pair is reported before a missing one: it is the more
-    specific mistake.
+    Shared by Staff.clean(), the serializer and the token registration so the
+    three cannot disagree. A half-filled pair is reported before a missing
+    one: it is the more specific mistake.
     """
     errors = {}
+    if pharmacy_id is not UNCHECKED and pharmacy_id is None and role != StaffRole.ADMIN:
+        errors["pharmacy"] = f"A {StaffRole(role).label.lower()} must be employed by a pharmacy."
     if bool(registration_state) != bool(registration_number):
         errors["registration_number"] = (
             "A state registration needs both the issuing state and the number."

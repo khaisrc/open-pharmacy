@@ -20,7 +20,7 @@ docker compose run --rm web python manage.py makemigrations
 docker compose run --rm web python manage.py makemigrations --check --dry-run
 docker compose run --rm web python manage.py spectacular --fail-on-warn
 docker compose up --build        # after changing dependencies
-docker compose down -v           # stop and drop the database
+docker compose --profile auth down -v   # stop everything (auth included) and drop the database
 ```
 
 Do not run `ruff` or `manage.py` from the host `.venv`; the venv is not the
@@ -50,6 +50,7 @@ pharmacy/services/     same split; every write and every rule (base.py: CrudServ
 pharmacy/serializers/  same split; the live-duplicate check in base.py
 pharmacy/views/        same split; adapters over the two above, nested routes in base.py
 pharmacy/admin/        same split; the Django admin as another adapter (base.py: ServiceModelAdmin)
+pharmacy/auth/         bearer-token verification, the claims contract, scopes; providers/ holds the one adapter per identity product
 pharmacy/filters.py    every list filterset
 pharmacy/validators.py NPI check digit, NDC and NCPDP normalization
 pharmacy/exceptions.py the error envelope and every 409
@@ -145,9 +146,20 @@ the lock in a write path. The authorized-quantity rule is a service rule held
 by the prescription's row lock, not a CHECK; the database constraints on a
 fill are single-row facts only. `is_partial` is derived the same way.
 
-**`X-Staff-Id` is resolved in one place**, `ServiceViewSetMixin.ctx`, into
-`WriteContext.staff`. Services that need a person read `ctx.staff`; nothing
-reads the header. When a token carries staff identity, that is the seam.
+**Who is acting is the token.** `pharmacy/auth/` verifies the bearer token
+against the identity provider's keys -- through an adapter in
+`pharmacy/auth/providers/`, the only place a provider's name or paths may
+appear -- maps its claims to the contract in `pharmacy/auth/claims.py`,
+reads it into a `Principal` and resolves the `Staff` row for its subject (`services.staff.identify`: created on first sight,
+never updated from a token, refused if the claims no longer match). The base
+viewset and the admin turn that -- or the Django user behind a Basic or
+session credential, who holds every scope -- into `WriteContext.principal`;
+services that need a person read `ctx.staff`, and nothing below the view
+touches the request. Permissions are scopes, declared per action as
+`required_scopes` on the viewset and checked by `HasScope`; the one
+state-dependent rule (a technician may change a prescription only until a
+fill is started) lives in the prescription service and is keyed on scopes,
+never on a role.
 
 **Identifiers are normalized on the way in**, in `validators.py`: an NPI must
 carry a valid Luhn check digit, an NDC in any segmented form is stored as 11

@@ -102,7 +102,9 @@ def pharmacist_in_charge_problem(staff, pharmacy):
     keeps the designation until someone changes it. Shared by the model and
     the serializer so the two cannot disagree.
     """
-    if staff.role != StaffRole.PHARMACIST:
+    # The roles held, not the highest: an admin who is also a pharmacist
+    # qualifies, an admin who is not does not.
+    if StaffRole.PHARMACIST not in staff.all_roles:
         return "The pharmacist-in-charge must be a pharmacist."
     if not staff.is_active:
         return "The pharmacist-in-charge must be an active staff member."

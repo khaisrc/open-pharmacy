@@ -18,3 +18,7 @@ DATABASES = {
 }
 
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=["http://localhost:3000"])
+
+# Dev tokens from `manage.py mint_token`, for curl without a UI. Local only:
+# no other settings module reads this, so the variable means nothing elsewhere.
+AUTH_DEV_SIGNING_KEY = env.str("AUTH_DEV_SIGNING_KEY", default="")

@@ -7,7 +7,6 @@ from django.http import Http404
 from rest_framework import status
 from rest_framework.exceptions import APIException, NotFound
 from rest_framework.exceptions import PermissionDenied as DRFPermissionDenied
-from rest_framework.views import exception_handler as drf_exception_handler
 
 # Maps a violated partial-unique constraint to (record, field, label): what the
 # row is called, the field a client should look at, and what a client calls it.
@@ -50,12 +49,37 @@ class Conflict(ApiError):
 
 
 class InvalidRequest(ApiError):
-    """400 for a request that is malformed in a way no serializer field owns:
-    a bad X-Staff-Id header, a write that needs one and has none."""
+    """400 for a request that is malformed in a way no serializer field owns."""
 
     status_code = status.HTTP_400_BAD_REQUEST
     default_detail = "The request is invalid."
     default_code = "invalid_request"
+
+
+class Unauthenticated(ApiError):
+    """401: no usable credential. The raise site names which way it failed
+    (`token_missing`, `token_expired`, `identity_changed`, ...)."""
+
+    status_code = status.HTTP_401_UNAUTHORIZED
+    default_detail = "Authentication credentials were not provided or are invalid."
+    default_code = "not_authenticated"
+
+
+class InsufficientScope(ApiError):
+    """403: authenticated, but the token does not grant this action."""
+
+    status_code = status.HTTP_403_FORBIDDEN
+    default_detail = "The token does not grant this action."
+    default_code = "insufficient_scope"
+
+
+class IdentityUnavailable(ApiError):
+    """503: the identity server's keys could not be fetched, so the token
+    was not judged. Distinct from a 401 on purpose: retrying helps."""
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "The identity server is unreachable; the token could not be verified."
+    default_code = "identity_unavailable"
 
 
 def duplicate(record, field, label, value=None, existing=None, extra=None):
@@ -129,6 +153,11 @@ def exception_handler(exc, context):
             if name in text:
                 exc = Conflict(message, code=code)
                 break
+
+    # Imported here, not at the top: rest_framework.views evaluates the
+    # configured authentication classes on import, which import the services,
+    # which import this module. A leaf module must not import the root.
+    from rest_framework.views import exception_handler as drf_exception_handler
 
     response = drf_exception_handler(exc, context)
     if response is None:

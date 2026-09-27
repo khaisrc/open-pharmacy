@@ -30,11 +30,14 @@ from .prescription import (
 )
 from .rx_counter import RxCounter
 from .staff import (
+    ROLE_PRECEDENCE,
     ROLES_REQUIRING_CERTIFICATION,
     ROLES_REQUIRING_REGISTRATION,
+    SUPERVISING_ROLES,
     CertificationBody,
     Staff,
     StaffRole,
+    highest_role,
 )
 
 __all__ = [
@@ -42,9 +45,11 @@ __all__ = [
     "FILL_IN_FLIGHT_STATUSES",
     "FILL_TERMINAL_STATUSES",
     "FILL_TRANSITIONS",
+    "ROLE_PRECEDENCE",
     "ROLES_REQUIRING_CERTIFICATION",
     "ROLES_REQUIRING_REGISTRATION",
     "RX_NUMBER_MAX",
+    "SUPERVISING_ROLES",
     "TERMINAL_STATUSES",
     "Address",
     "CertificationBody",
@@ -67,4 +72,5 @@ __all__ = [
     "Staff",
     "StaffRole",
     "TimeStampedModel",
+    "highest_role",
 ]

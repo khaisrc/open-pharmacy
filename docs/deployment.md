@@ -16,6 +16,11 @@ refuse to start with anything missing; `prod` additionally refuses the local
 | `THROTTLE_ANON`, `THROTTLE_USER` | | e.g. `100/min` |
 | `HOME_PHARMACY_LOCATION_NCPDP_ID` | | the store this deployment serves; default `4417829` |
 | `SECRETS_FILE` | | optional env file a secrets sidecar writes, read before the environment |
+| `AUTH_PROVIDER` | | the identity provider adapter; default `pharmacy.auth.providers.logto.LogtoProvider` |
+| `AUTH_ISSUER` | yes | the provider's issuer URL, what it writes into a token's `iss` |
+| `AUTH_INTERNAL_URL` | | where this service reaches the provider for discovery and keys when that is not the public URL -- the Compose network locally, a private address behind a proxy |
+| `AUTH_AUDIENCE` | yes | this API's identifier at the provider, the token audience |
+| `AUTH_DEV_SIGNING_KEY` | local only | a PEM key `mint_token` signs dev tokens with; read by `local.py` alone |
 
 `.env.example` lists the same contract without values.
 
@@ -40,6 +45,44 @@ migration creates the row: the starting value is a fact about the pharmacy,
 set at or above the highest number it already holds. It is set through the
 API -- `rx_number_seed` and `step` on `POST` or `PATCH /pharmacies/{id}/`
 -- or in the admin's RxCounter page.
+
+## The identity provider
+
+Users are created at the identity provider, sign in through the UI, and the
+UI sends the access token on every request. The API verifies the token
+against the provider's published keys and reads the **identity claims
+contract** out of it (`pharmacy/auth/claims.py`): `sub`, `email`, the OIDC
+profile names, `roles`, `scope`, `pharmacy_id`, the board registration, the
+technician certification, and `supervising_user_id` for an intern. Nothing in the service knows which
+product is behind that; an adapter in `pharmacy/auth/providers/` knows
+where the provider publishes its keys and how its native claims map onto
+the contract. `AUTH_PROVIDER` names the adapter; `AUTH_ISSUER` and
+`AUTH_AUDIENCE` are the `iss` and `aud` a token must carry.
+
+Whatever the provider, it needs, once:
+
+1. **This API as an audience** (`AUTH_AUDIENCE`) with every scope in
+   `pharmacy/auth/scopes.py` defined on it by name, and access tokens of
+   about 15 minutes.
+2. **Roles** named `admin`, `pharmacist`, `certified_technician`,
+   `technician`, `intern`, each granted the scopes `ROLE_SCOPES` in that
+   module lists. A user may hold several.
+3. **An application** for the UI that requests this audience and its
+   scopes at sign-in.
+4. **Tokens that carry the contract** -- every provider has its own
+   mechanism for adding claims; the adapter's page says how.
+5. **Users** with a primary email, given and family name, one or more
+   roles, and the employer / registration / supervisor data the contract
+   needs. The API refuses a token that cannot make a valid staff record, so
+   completeness is enforced by refusal.
+
+Signing keys rotate at the provider without a redeploy: the API refreshes
+its cached key set on an unknown key id.
+
+Adapters and their configuration: [Logto](identity-providers/logto.md)
+(the default; locally `manage.py seed_auth` configures it). Adding another is a subclass of `OIDCProvider` that
+overrides `claims()` where the native layout differs, plus a page like
+Logto's.
 
 ## Serving
 

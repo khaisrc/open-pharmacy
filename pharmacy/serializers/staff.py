@@ -13,10 +13,15 @@ from .pharmacy import PharmacySummarySerializer
 class StaffSerializer(serializers.ModelSerializer):
     """The employing pharmacy comes from the URL, never the body: staff are a
     sub-resource of a pharmacy, so the viewset attaches it on create and a
-    record cannot be moved to another employer by PATCH."""
+    record cannot be moved to another employer by PATCH.
+
+    A row with `external_user_id` came from an identity provider token and is that
+    identity's record: read-only here except `is_active` (the service
+    refuses the rest with 409). `email` and `roles` are the token's."""
 
     pharmacy = PharmacySummarySerializer(read_only=True)
     full_name = serializers.CharField(read_only=True)
+    is_external = serializers.BooleanField(read_only=True)
     # Declared explicitly to drop the UniqueValidator DRF generates for the
     # conditional UniqueConstraint, which would report a duplicate as a bare
     # 400 before validate_npi can raise the 409 naming the existing record.
@@ -26,12 +31,16 @@ class StaffSerializer(serializers.ModelSerializer):
         model = Staff
         fields = [
             "id",
+            "external_user_id",
+            "email",
+            "is_external",
             "first_name",
             "last_name",
             "middle_name",
             "suffix",
             "full_name",
             "role",
+            "roles",
             "registration_state",
             "registration_number",
             "certification_body",
@@ -42,7 +51,7 @@ class StaffSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["id", "external_user_id", "email", "roles", "created_at", "updated_at"]
 
     def validate_registration_state(self, value):
         value = (value or "").strip().upper()
@@ -109,6 +118,7 @@ class StaffSummarySerializer(serializers.ModelSerializer):
             "id",
             "first_name",
             "last_name",
+            "email",
             "role",
             "registration_state",
             "registration_number",

@@ -9,7 +9,7 @@ from .staff import StaffSummarySerializer
 class FillSerializer(serializers.ModelSerializer):
     """Two fields are writable -- the quantity and the days' supply -- and
     only on a pending fill; everything else is set by the workflow. The
-    people come from the X-Staff-Id header, the status from the actions."""
+    people come from the bearer token, the status from the actions."""
 
     rx_number = serializers.IntegerField(source="prescription.rx_number", read_only=True)
     pharmacy_location = PharmacyLocationSummarySerializer(read_only=True)
