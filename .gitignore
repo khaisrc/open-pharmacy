@@ -13,3 +13,5 @@ staticfiles/
 e2e/report.html
 e2e/junit.xml
 e2e/.assert-counts
+
+logto/
