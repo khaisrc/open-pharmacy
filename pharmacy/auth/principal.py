@@ -28,6 +28,8 @@ class Principal:
     pharmacy_id: str | None = None
     registration_state: str = ""
     registration_number: str = ""
+    certification_body: str = ""
+    certification_number: str = ""
     supervising_external_user_id: str = ""
     scopes: frozenset = field(default_factory=frozenset)
     staff: object = None
@@ -68,6 +70,8 @@ class Principal:
             pharmacy_id=claims.get(c.PHARMACY_ID) or None,
             registration_state=claims.get(c.REGISTRATION_STATE) or "",
             registration_number=claims.get(c.REGISTRATION_NUMBER) or "",
+            certification_body=claims.get(c.CERTIFICATION_BODY) or "",
+            certification_number=claims.get(c.CERTIFICATION_NUMBER) or "",
             supervising_external_user_id=claims.get(c.SUPERVISING_USER_ID) or "",
             scopes=frozenset((claims.get(c.SCOPE) or "").split()),
         )

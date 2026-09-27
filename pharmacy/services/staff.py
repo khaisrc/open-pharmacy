@@ -32,6 +32,8 @@ IDENTITY_FIELDS = (
     "pharmacy_id",
     "registration_state",
     "registration_number",
+    "certification_body",
+    "certification_number",
 )
 # What an admin may still change on a row the identity provider owns.
 LOCALLY_EDITABLE = frozenset({"is_active"})
@@ -57,6 +59,14 @@ class StaffService(CrudService):
         # A hand-typed row holds the one role it was given.
         fields.setdefault("roles", [fields["role"]])
         return super().create(ctx, **fields)
+
+    def describe(self, principal):
+        """The row a token's principal would register as, without writing:
+        the validation a first request gets, for a seed to check a user
+        before anyone signs in. Raises `Unauthenticated` as `identify` would."""
+        fields = self._claims_as_row(principal)
+        self._refuse_if_incomplete(fields)
+        return fields
 
     def update(self, ctx, instance, **fields):
         self._refuse_external_edit(instance, fields)
@@ -111,6 +121,8 @@ class StaffService(CrudService):
             "pharmacy": pharmacy,
             "registration_state": (principal.registration_state or "").upper(),
             "registration_number": (principal.registration_number or "").upper(),
+            "certification_body": (principal.certification_body or "").upper(),
+            "certification_number": (principal.certification_number or "").strip(),
         }
 
     def _refuse_if_changed(self, staff, principal):
@@ -133,14 +145,14 @@ class StaffService(CrudService):
                 details={"external_user_id": staff.external_user_id, "fields": differing},
             )
 
-    def _register(self, principal, *, path, method, request_id):
-        fields = self._claims_as_row(principal)
+    @staticmethod
+    def _refuse_if_incomplete(fields):
         problems = credential_problems(
             fields["role"],
             fields["registration_state"],
             fields["registration_number"],
-            "",
-            "",
+            fields["certification_body"],
+            fields["certification_number"],
             pharmacy_id=fields["pharmacy"].pk if fields["pharmacy"] else None,
         )
         if problems:
@@ -149,6 +161,10 @@ class StaffService(CrudService):
                 code="identity_incomplete",
                 details=problems,
             )
+
+    def _register(self, principal, *, path, method, request_id):
+        fields = self._claims_as_row(principal)
+        self._refuse_if_incomplete(fields)
         with transaction.atomic():
             staff = Staff(**fields)
             # The predecessors must be inactive before the successor can hold

@@ -249,6 +249,11 @@ class TestFirstSight:
             ),
             (("technician",), {"pharmacy_id": None}, "identity_incomplete"),
             (
+                ("certified_technician",),
+                {"certification_body": None, "certification_number": None},
+                "identity_incomplete",
+            ),
+            (
                 ("technician",),
                 {"pharmacy_id": "00000000-0000-4000-8000-000000000000"},
                 "identity_incomplete",
@@ -259,6 +264,7 @@ class TestFirstSight:
             "no role",
             "pharmacist unregistered",
             "no pharmacy",
+            "certified technician uncertified",
             "unknown pharmacy",
             "intern alone",
         ],

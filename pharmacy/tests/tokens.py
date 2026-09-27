@@ -89,6 +89,11 @@ class Identity:
         if "pharmacist" in self.roles:
             self.claims.setdefault(c.REGISTRATION_STATE, "NY")
             self.claims.setdefault(c.REGISTRATION_NUMBER, f"RPH.{n:06d}")
+        if "certified_technician" in self.roles:
+            self.claims.setdefault(c.REGISTRATION_STATE, "NY")
+            self.claims.setdefault(c.REGISTRATION_NUMBER, f"RPT.{n:06d}")
+            self.claims.setdefault(c.CERTIFICATION_BODY, "PTCB")
+            self.claims.setdefault(c.CERTIFICATION_NUMBER, f"{n:010d}")
 
     def token(self, scopes=None, **overrides):
         claims = {**self.claims, **overrides}
