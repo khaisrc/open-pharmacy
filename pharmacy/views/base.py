@@ -3,17 +3,8 @@ from rest_framework import viewsets
 from rest_framework.generics import get_object_or_404
 
 from pharmacy import repositories
-from pharmacy.auth import Principal
+from pharmacy.auth import principal_of
 from pharmacy.services import WriteContext
-
-
-def principal_of(request):
-    """The request's principal: the one the bearer token produced, or one
-    made from the Django user a session or Basic credential authenticated."""
-    user = request.user
-    if isinstance(user, Principal):
-        return user
-    return Principal.from_django_user(user)
 
 
 class ServiceViewSetMixin:

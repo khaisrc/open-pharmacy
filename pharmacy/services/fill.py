@@ -14,7 +14,7 @@ from rest_framework.exceptions import ValidationError
 
 from pharmacy import repositories
 from pharmacy.exceptions import Conflict, InsufficientScope
-from pharmacy.models import FILL_TRANSITIONS, FillStatus, PrescriptionStatus
+from pharmacy.models import FILL_TRANSITIONS, FillStatus, PrescriptionStatus, StaffRole
 
 from . import history
 from .base import CrudService
@@ -74,9 +74,17 @@ class FillService(CrudService):
             return super().update(ctx, fill, **fields)
 
     def verify(self, ctx, fill):
-        # Who may verify is the fills:verify scope, checked before this
-        # runs; here the verifier only has to be a person.
-        return self._transition(ctx, fill, "verify", verified_by=self._require_staff(ctx))
+        # The fills:verify scope is checked before this runs. The verifier
+        # must also be a pharmacist: an admin holds every scope but is not
+        # one unless the pharmacist role is among its roles.
+        staff = self._require_staff(ctx)
+        if StaffRole.PHARMACIST not in staff.all_roles:
+            raise InsufficientScope(
+                "Only a pharmacist can verify a fill.",
+                code="pharmacist_required",
+                details={"staff_id": str(staff.pk), "roles": sorted(staff.all_roles)},
+            )
+        return self._transition(ctx, fill, "verify", verified_by=staff)
 
     def unverify(self, ctx, fill):
         return self._transition(ctx, fill, "unverify", verified_by=None)

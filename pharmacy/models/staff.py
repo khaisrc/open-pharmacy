@@ -82,7 +82,7 @@ class Staff(TimeStampedModel):
 
     # The token subject this row was created from, and the email it carried.
     # Blank on a row typed in by hand.
-    external_user_id = models.CharField(max_length=32, blank=True)
+    external_user_id = models.CharField(max_length=255, blank=True)
     email = models.EmailField(blank=True)
     first_name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100)
@@ -122,7 +122,7 @@ class Staff(TimeStampedModel):
             # Partial: over live, active rows, and never over blanks. Active
             # rather than live so that a successor identity -- the new
             # user created when a person's details change -- can hold the
-            # registration once the old row is deactivated.
+            # registration, NPI or email once the old row is deactivated.
             models.UniqueConstraint(
                 fields=["registration_state", "registration_number"],
                 condition=Q(deleted__isnull=True, is_active=True) & ~Q(registration_number=""),
@@ -140,7 +140,7 @@ class Staff(TimeStampedModel):
             ),
             models.UniqueConstraint(
                 fields=["email"],
-                condition=Q(deleted__isnull=True) & ~Q(email=""),
+                condition=Q(deleted__isnull=True, is_active=True) & ~Q(email=""),
                 name="uniq_live_staff_email",
             ),
         ]

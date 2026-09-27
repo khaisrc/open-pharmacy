@@ -3,10 +3,12 @@
 `identify` is called by the authentication class on every bearer request:
 it finds the row for the token's subject, or creates it on first sight,
 and refuses a token whose identity no longer matches what that row
-recorded. That comparison is what makes "identity per subject is
+recorded, or whose row is inactive. That comparison is what makes "identity per subject is
 immutable" a rule rather than a convention -- the identity provider issues
 a token for an edited user just the same.
 """
+
+import uuid
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
@@ -48,12 +50,23 @@ class StaffService(CrudService):
     def identify(self, principal, *, path="", method="", request_id=""):
         """The `Staff` row for a token's principal: found, or created on
         first sight. Raises `Unauthenticated` when the token cannot be
-        turned into a valid, unchanged identity."""
+        turned into a valid, unchanged, active identity."""
         staff = self.repository.find(external_user_id=principal.external_user_id).first()
         if staff is not None:
-            self._refuse_if_changed(staff, principal)
-            return staff
+            return self._accept(staff, principal)
         return self._register(principal, path=path, method=method, request_id=request_id)
+
+    def _accept(self, staff, principal):
+        self._refuse_if_changed(staff, principal)
+        # Suspending the user at the provider stops new tokens; this stops
+        # one already issued, and keeps a retired predecessor out.
+        if not staff.is_active:
+            raise Unauthenticated(
+                "This staff member is inactive.",
+                code="staff_inactive",
+                details={"external_user_id": staff.external_user_id},
+            )
+        return staff
 
     def create(self, ctx, **fields):
         # A hand-typed row holds the one role it was given.
@@ -89,6 +102,24 @@ class StaffService(CrudService):
             )
 
     def _claims_as_row(self, principal):
+        """The row's fields from the claims, with the pharmacy looked up."""
+        fields = self._claimed_fields(principal)
+        pharmacy_id = fields.pop("pharmacy_id")
+        pharmacy = None
+        if pharmacy_id is not None:
+            pharmacy = repositories.pharmacies.find(pk=pharmacy_id).first()
+            if pharmacy is None:
+                raise Unauthenticated(
+                    "The token's pharmacy_id names no pharmacy here.",
+                    code="identity_incomplete",
+                    details={"pharmacy_id": principal.pharmacy_id},
+                )
+        fields["pharmacy"] = pharmacy
+        return fields
+
+    def _claimed_fields(self, principal):
+        """The row's fields from the claims alone, `pharmacy_id` as a UUID.
+        No query: this runs on every bearer request."""
         role = highest_role(principal.roles)
         if role is None:
             raise Unauthenticated(
@@ -102,15 +133,6 @@ class StaffService(CrudService):
                 "(supervising_user_id).",
                 code="supervisor_required",
             )
-        pharmacy = None
-        if principal.pharmacy_id:
-            pharmacy = repositories.pharmacies.find(pk=principal.pharmacy_id).first()
-            if pharmacy is None:
-                raise Unauthenticated(
-                    "The token's pharmacy_id names no pharmacy here.",
-                    code="identity_incomplete",
-                    details={"pharmacy_id": principal.pharmacy_id},
-                )
         return {
             "external_user_id": principal.external_user_id,
             "email": principal.email,
@@ -118,16 +140,28 @@ class StaffService(CrudService):
             "last_name": principal.family_name,
             "role": role,
             "roles": sorted(principal.roles),
-            "pharmacy": pharmacy,
+            "pharmacy_id": self._pharmacy_id(principal),
             "registration_state": (principal.registration_state or "").upper(),
             "registration_number": (principal.registration_number or "").upper(),
             "certification_body": (principal.certification_body or "").upper(),
             "certification_number": (principal.certification_number or "").strip(),
         }
 
+    @staticmethod
+    def _pharmacy_id(principal):
+        if principal.pharmacy_id is None:
+            return None
+        try:
+            return uuid.UUID(str(principal.pharmacy_id).strip())
+        except ValueError as exc:
+            raise Unauthenticated(
+                "The token's pharmacy_id is not a pharmacy id.",
+                code="identity_incomplete",
+                details={"pharmacy_id": principal.pharmacy_id},
+            ) from exc
+
     def _refuse_if_changed(self, staff, principal):
-        claimed = self._claims_as_row(principal)
-        claimed["pharmacy_id"] = claimed.pop("pharmacy").pk if claimed["pharmacy"] else None
+        claimed = self._claimed_fields(principal)
         if staff.role == StaffRole.INTERN and not principal.supervising_external_user_id:
             raise Unauthenticated(
                 "An intern's token must name a supervising pharmacist or technician "
@@ -166,6 +200,12 @@ class StaffService(CrudService):
         fields = self._claims_as_row(principal)
         self._refuse_if_incomplete(fields)
         with transaction.atomic():
+            # A UI's first page load sends several requests at once: the
+            # lock makes the others wait, then find the row the first made.
+            self.repository.lock_subject(principal.external_user_id)
+            existing = self.repository.find(external_user_id=principal.external_user_id).first()
+            if existing is not None:
+                return self._accept(existing, principal)
             staff = Staff(**fields)
             # The predecessors must be inactive before the successor can hold
             # their registration (the unique constraint is over active rows,
@@ -191,22 +231,29 @@ class StaffService(CrudService):
         return staff
 
     def _retire_predecessors(self, successor):
-        """A new identity taking a registration or NPI an active row holds
-        is the same person, recreated after a change: the old row stops
-        being active. Returns (row, snapshot before) pairs for the history."""
-        holders = []
+        """A new identity taking a registration, NPI or email an active row
+        holds is the same person, recreated after a change: the old row stops
+        being active. The email covers a technician promoted to pharmacist,
+        who held no registration. Returns (row, snapshot before) pairs for
+        the history."""
+        lookups = []
         if successor.registration_number:
-            holders += list(
-                self.repository.find(
-                    registration_state=successor.registration_state,
-                    registration_number=successor.registration_number,
-                    is_active=True,
-                )
+            lookups.append(
+                {
+                    "registration_state": successor.registration_state,
+                    "registration_number": successor.registration_number,
+                }
             )
         if successor.npi:
-            holders += list(self.repository.find(npi=successor.npi, is_active=True))
+            lookups.append({"npi": successor.npi})
+        if successor.email:
+            lookups.append({"email": successor.email})
+        holders = {}
+        for lookup in lookups:
+            for row in self.repository.find(is_active=True, **lookup):
+                holders[row.pk] = row
         retired = []
-        for predecessor in holders:
+        for predecessor in holders.values():
             before = history.snapshot(predecessor)
             predecessor.is_active = False
             self.repository.save(predecessor, update_fields=["is_active", "updated_at"])
