@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import jwt
 
 from pharmacy.auth import claims as c
-from pharmacy.auth.scopes import ROLE_SCOPES
+from pharmacy.auth.scopes import scopes_for_roles
 
 from .tokens import TokenIssuer
 
@@ -48,9 +48,7 @@ class FakeLogto:
         """What the customizer would make of this user: the contract from
         the user's fields and customData, plus the roles held."""
         roles = [self.roles[r]["name"] for r in self.user_roles.get(user["id"], [])]
-        granted = set()
-        for role in roles:
-            granted |= ROLE_SCOPES.get(role, frozenset())
+        granted = scopes_for_roles(roles)
         asked = set(scope.split())
         claims = {
             "sub": user["id"],

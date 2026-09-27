@@ -17,7 +17,7 @@ from jwt.algorithms import ECAlgorithm
 
 from pharmacy.auth import claims as c
 from pharmacy.auth.providers import get_provider
-from pharmacy.auth.scopes import ALL_SCOPES, ROLE_SCOPES
+from pharmacy.auth.scopes import ALL_SCOPES, scopes_for_roles
 from pharmacy.auth.verifier import TokenVerifier, key_set_from
 
 KID = "test-key"
@@ -27,7 +27,7 @@ class TokenIssuer:
     def __init__(self, kid=KID):
         self.kid = kid
         self.private_key = ec.generate_private_key(ec.SECP384R1())
-        self.issuer = settings.AUTH_ISSUER.rstrip("/")
+        self.issuer = settings.AUTH_ISSUER
         self.audience = settings.AUTH_AUDIENCE
 
     def jwks(self):
@@ -42,9 +42,7 @@ class TokenIssuer:
         the given roles' scopes, like the provider's role grants; pass a list (or
         an empty one) to say exactly which."""
         if scopes is None:
-            scopes = set()
-            for role in roles:
-                scopes |= ROLE_SCOPES.get(role, frozenset())
+            scopes = scopes_for_roles(roles)
         now = int(time.time())
         payload = {
             "jti": uuid.uuid4().hex,

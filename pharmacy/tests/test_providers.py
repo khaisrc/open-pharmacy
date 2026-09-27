@@ -12,7 +12,9 @@ from pharmacy.auth import claims as c
 from pharmacy.auth.providers import OIDCProvider, get_provider, set_provider
 from pharmacy.auth.providers.logto import LogtoProvider
 from pharmacy.auth.providers.oidc import DiscoveryUnavailable
-from pharmacy.auth.verifier import IdentityUnavailable, TokenVerifier
+from pharmacy.auth.verifier import IdentityUnavailable, TokenVerifier, key_set_from
+
+from .tokens import TokenIssuer
 
 
 class FakeDiscovery:
@@ -62,6 +64,20 @@ class TestOIDCProvider:
         assert provider.issuer == "http://localhost:8441/oidc"
         assert provider.jwks_uri() == "http://auth:3001/oidc/jwks"
         assert fake.asked == ["http://auth:3001/oidc/.well-known/openid-configuration"]
+
+    def test_an_issuer_ending_in_a_slash_is_required_as_written(self, discovery):
+        """Auth0's `iss` is `https://tenant.auth0.com/`: the slash is part of it.
+        Discovery still drops it before appending the well-known path."""
+        fake = discovery(jwks_uri="https://tenant.auth0.com/.well-known/jwks.json")
+        provider = OIDCProvider(issuer="https://tenant.auth0.com/", audience="api")
+        assert provider.issuer == "https://tenant.auth0.com/"
+        provider.jwks_uri()
+        assert fake.asked == ["https://tenant.auth0.com/.well-known/openid-configuration"]
+
+        signer = TokenIssuer(kid="auth0")
+        signer.issuer, signer.audience = "https://tenant.auth0.com/", "api"
+        verifier = TokenVerifier(provider=provider, key_set=key_set_from(signer.jwks()))
+        assert verifier.verify(signer.mint("auth0|abc"))["iss"] == "https://tenant.auth0.com/"
 
     def test_unreachable_discovery_is_reported_not_guessed(self, discovery):
         discovery(fail=True)

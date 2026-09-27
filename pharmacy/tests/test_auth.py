@@ -7,18 +7,22 @@ provider; the claims are the identity claims contract.
 
 import base64
 import json
+import uuid
 
 import pytest
+from django.db import connection
 from rest_framework.test import APIClient
 
+from pharmacy import services
 from pharmacy.auth import authentication
 from pharmacy.auth.providers import get_provider
 from pharmacy.auth.scopes import ALL_SCOPES, TECHNICIAN_SCOPES, Scope
 from pharmacy.auth.verifier import IdentityUnavailable, TokenVerifier, key_set_from
+from pharmacy.exceptions import Unauthenticated
 from pharmacy.models import FieldChange, Prescription, Staff
 
 from .factories import FillFactory, PrescriptionFactory, StaffFactory
-from .helpers import PRESCRIPTIONS, fills_url, prescription_body, start_fill
+from .helpers import PRESCRIPTIONS, fills_url, prescription_body, race, start_fill
 from .tokens import TokenIssuer
 
 pytestmark = pytest.mark.django_db
@@ -176,6 +180,15 @@ class TestScopes:
     def test_health_and_docs_need_nothing(self):
         assert APIClient().get("/api/v1/health/").status_code == 200
 
+    def test_the_api_root_and_options_are_not_refused(self, api, identity):
+        for client in (api, bearer(identity().token())):
+            assert client.get("/api/v1/").status_code == 200
+            assert client.options(PATIENTS).status_code == 200
+
+    def test_a_method_the_route_does_not_serve_is_405(self, api, identity):
+        for client in (api, bearer(identity().token())):
+            assert client.delete("/api/v1/prescriptions/").status_code == 405
+
     def test_a_login_holds_every_scope(self, api):
         """Basic and session credentials stay all-access for the transition."""
         assert api.get(PATIENTS).status_code == 200
@@ -258,6 +271,8 @@ class TestFirstSight:
                 {"pharmacy_id": "00000000-0000-4000-8000-000000000000"},
                 "identity_incomplete",
             ),
+            (("technician",), {"pharmacy_id": "store-12"}, "identity_incomplete"),
+            (("technician",), {"pharmacy_id": " "}, "identity_incomplete"),
             (("intern",), {"supervising_user_id": None}, "supervisor_required"),
         ],
         ids=[
@@ -266,6 +281,8 @@ class TestFirstSight:
             "no pharmacy",
             "certified technician uncertified",
             "unknown pharmacy",
+            "malformed pharmacy",
+            "blank pharmacy",
             "intern alone",
         ],
     )
@@ -283,16 +300,40 @@ class TestFirstSight:
         assert staff.role == "pharmacist"
         assert staff.roles == ["pharmacist", "technician"]
 
-    def test_admin_needs_no_pharmacy_and_can_do_everything(self, identity, prescription):
+    def test_admin_needs_no_pharmacy(self, identity, prescription):
         admin = identity(roles=("admin",), pharmacy=None)
         client = bearer(admin.token())
         created = start_fill(client, prescription)
         assert created.status_code == 201
         staff = Staff.objects.get(external_user_id=admin.external_user_id)
         assert staff.pharmacy is None and staff.role == "admin"
-        fill_id = created.data["id"]
-        assert client.post(fills_url(prescription, fill_id, "verify")).status_code == 200
-        assert client.post(fills_url(prescription, fill_id, "complete")).status_code == 200
+        # Every scope, but not a pharmacist: verifying names one.
+        response = client.post(fills_url(prescription, created.data["id"], "verify"))
+        assert response.status_code == 403
+        assert error(response) == "pharmacist_required"
+
+    @pytest.mark.parametrize(
+        "subject",
+        [str(uuid.uuid4()), "google-oauth2|" + "1" * 21, "auth0|" + "a" * 24],
+        ids=["uuid", "auth0 social", "auth0 database"],
+    )
+    def test_a_long_subject_registers(self, identity, subject):
+        ident = identity()
+        ident.external_user_id = subject
+        assert bearer(ident.token()).get(PATIENTS).status_code == 200
+        assert Staff.objects.filter(external_user_id=subject).exists()
+
+    def test_describe_refuses_a_malformed_pharmacy(self, identity):
+        principal = identity(roles=("technician",), pharmacy_id="store-12").principal()
+        with pytest.raises(Unauthenticated) as refused:
+            services.staff.describe(principal)
+        assert refused.value.detail.code == "identity_incomplete"
+
+    def test_a_known_identity_is_one_query(self, identity, django_assert_num_queries):
+        ident = identity()
+        ident.register()
+        with django_assert_num_queries(1):
+            services.staff.identify(ident.principal())
 
 
 class TestSuccession:
@@ -324,6 +365,30 @@ class TestSuccession:
         typed.refresh_from_db()
         assert typed.is_active is False
 
+    def test_a_successor_keeping_the_email_registers(self, identity):
+        old = identity(
+            roles=("pharmacist",), registration_number="RPH.900126", email="kept@example.local"
+        )
+        old_row = old.register()
+        new = identity(
+            roles=("pharmacist",), registration_number="RPH.900126", email="kept@example.local"
+        )
+        assert bearer(new.token()).get(PATIENTS).status_code == 200
+        old_row.refresh_from_db()
+        assert old_row.is_active is False
+
+    def test_a_promoted_technician_is_retired_by_email(self, identity):
+        """A technician holds no registration, so only the email says the new
+        pharmacist identity is the same person."""
+        old = identity(roles=("technician",), email="promoted@example.local")
+        old_row = old.register()
+        new = identity(roles=("pharmacist",), email="promoted@example.local")
+        assert bearer(new.token()).get(PATIENTS).status_code == 200
+        old_row.refresh_from_db()
+        assert old_row.is_active is False
+        new_row = Staff.objects.get(external_user_id=new.external_user_id)
+        assert new_row.is_active and new_row.role == "pharmacist"
+
     def test_the_old_identity_still_cannot_act(self, identity):
         old = identity(roles=("pharmacist",), registration_number="RPH.000124")
         old.register()
@@ -334,6 +399,54 @@ class TestSuccession:
         response = bearer(old.token(email="old@example.local-DEACTIVATED")).get(PATIENTS)
         assert response.status_code == 401
         assert error(response) == "identity_changed"
+
+
+class TestDeactivation:
+    """Suspending a user at the provider stops new tokens; `is_active` is
+    what stops one already issued, and what keeps a retired predecessor out."""
+
+    def test_an_inactive_row_cannot_act(self, identity):
+        ident = identity()
+        staff = ident.register()
+        staff.is_active = False
+        staff.save(update_fields=["is_active"])
+        response = bearer(ident.token()).get(PATIENTS)
+        assert response.status_code == 401
+        assert error(response) == "staff_inactive"
+
+    def test_reactivating_restores_access(self, identity):
+        ident = identity()
+        staff = ident.register()
+        staff.is_active = False
+        staff.save(update_fields=["is_active"])
+        staff.is_active = True
+        staff.save(update_fields=["is_active"])
+        assert bearer(ident.token()).get(PATIENTS).status_code == 200
+
+    def test_a_retired_predecessor_cannot_act_with_its_old_token(self, identity):
+        old = identity(roles=("pharmacist",), registration_number="RPH.900125")
+        old.register()
+        new = identity(roles=("pharmacist",), registration_number="RPH.900125")
+        assert bearer(new.token()).get(PATIENTS).status_code == 200
+        # The old token, email unchanged: nobody suffixed it at the provider.
+        response = bearer(old.token()).get(PATIENTS)
+        assert response.status_code == 401
+        assert error(response) == "staff_inactive"
+
+
+@pytest.mark.django_db(transaction=True)
+class TestFirstSightConcurrency:
+    @pytest.fixture(autouse=True)
+    def postgres_only(self):
+        if connection.vendor != "postgresql":
+            pytest.skip("the registration lock is only exercised on PostgreSQL")
+
+    def test_parallel_first_requests_make_one_row(self, identity):
+        ident = identity()
+        token = ident.token()
+        responses = race([lambda: bearer(token).get(PATIENTS)] * 4)
+        assert [getattr(r, "status_code", r) for r in responses] == [200] * 4
+        assert Staff.objects.filter(external_user_id=ident.external_user_id).count() == 1
 
 
 class TestTechnicianScopes:

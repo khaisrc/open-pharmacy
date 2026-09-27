@@ -1,11 +1,10 @@
 """The fill workflow: /prescriptions/{id}/fills/ and its four transitions."""
 
-import threading
-
 import pytest
 from django.db import connection
 from rest_framework.test import APIClient
 
+from pharmacy.auth.scopes import ALL_SCOPES
 from pharmacy.models import Fill, FillStatus, PrescriptionStatus, RxCounter
 
 from .conftest import as_staff
@@ -14,7 +13,15 @@ from .factories import (
     PharmacyLocationFactory,
     PrescriptionFactory,
 )
-from .helpers import FILLS, PRESCRIPTIONS, dispense, fills_url, prescription_body, start_fill
+from .helpers import (
+    FILLS,
+    PRESCRIPTIONS,
+    dispense,
+    fills_url,
+    prescription_body,
+    race,
+    start_fill,
+)
 
 pytestmark = pytest.mark.django_db
 MISSING = "00000000-0000-4000-8000-000000000000"
@@ -47,6 +54,26 @@ class TestWhoActs:
         assert response.data["error"]["details"]["required"] == ["fills:verify"]
         fill.refresh_from_db()
         assert fill.status == FillStatus.PENDING
+
+    def test_an_admin_who_is_not_a_pharmacist_cannot_verify(self, identity, fill):
+        admin = identity(roles=("admin",), pharmacy=None)
+        response = transition(admin.bearer(APIClient()), fill.prescription, fill, "verify")
+        assert response.status_code == 403
+        assert response.data["error"]["code"] == "pharmacist_required"
+        fill.refresh_from_db()
+        assert fill.status == FillStatus.PENDING
+
+    def test_the_verify_scope_alone_does_not_make_a_pharmacist(self, technician, fill):
+        client = as_staff(APIClient(), technician, scopes=ALL_SCOPES)
+        response = transition(client, fill.prescription, fill, "verify")
+        assert response.status_code == 403
+        assert response.data["error"]["code"] == "pharmacist_required"
+
+    def test_an_admin_who_is_a_pharmacist_can_verify(self, identity, fill):
+        ident = identity(roles=("admin", "pharmacist"))
+        response = transition(ident.bearer(APIClient()), fill.prescription, fill, "verify")
+        assert response.status_code == 200
+        assert response.data["verified_by"]["email"] == ident.claims["email"]
 
     def test_operator_is_whoever_the_token_is_for(self, as_technician, technician, prescription):
         response = start_fill(as_technician, prescription)
@@ -327,35 +354,13 @@ class TestConcurrency:
         if connection.vendor != "postgresql":
             pytest.skip("select_for_update is only exercised on PostgreSQL")
 
-    @staticmethod
-    def race(workers):
-        """Run each callable in its own thread, started together, returning
-        their results in order. Each thread closes its own connection so the
-        test database can be torn down."""
-        barrier = threading.Barrier(len(workers))
-        results = [None] * len(workers)
-
-        def run(index, work):
-            try:
-                barrier.wait()
-                results[index] = work()
-            finally:
-                connection.close()
-
-        threads = [threading.Thread(target=run, args=(i, w)) for i, w in enumerate(workers)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-        return results
-
     def test_two_fills_against_the_last_quantity(self, user, pharmacist):
         rx = PrescriptionFactory(fills_authorized=1)
 
         def start():
             return start_fill(as_staff(APIClient(), pharmacist), rx)
 
-        responses = self.race([start, start])
+        responses = race([start, start])
         assert sorted(r.status_code for r in responses) == [201, 409]
         refused = next(r for r in responses if r.status_code == 409)
         assert refused.data["error"]["code"] == "fill_in_progress"
@@ -373,7 +378,7 @@ class TestConcurrency:
                 format="json",
             )
 
-        responses = self.race([create, create])
+        responses = race([create, create])
         assert [r.status_code for r in responses] == [201, 201]
         assert sorted(r.data["rx_number"] for r in responses) == [1, 2]
         assert RxCounter.objects.get(pharmacy=location.pharmacy).last_issued == 2
