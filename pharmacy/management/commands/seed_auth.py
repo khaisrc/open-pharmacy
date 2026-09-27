@@ -49,7 +49,7 @@ from pharmacy import services
 from pharmacy.auth import Principal
 from pharmacy.auth import claims as c
 from pharmacy.auth.providers.logto import LogtoProvider
-from pharmacy.auth.scopes import ROLE_SCOPES, Scope
+from pharmacy.auth.scopes import ROLE_SCOPES, Scope, scopes_for_roles
 from pharmacy.auth.verifier import TokenVerifier
 from pharmacy.exceptions import Unauthenticated
 from pharmacy.models import PharmacyLocation
@@ -546,9 +546,7 @@ class Command(BaseCommand):
         verifier = TokenVerifier(provider=provider)
         failures = []
         for username, _, _, user_roles, *_ in TEST_USERS:
-            expected = set()
-            for role in user_roles:
-                expected |= ROLE_SCOPES[role]
+            expected = scopes_for_roles(user_roles)
             raw = logto.user_token(
                 users[username]["id"], app["id"], settings.AUTH_AUDIENCE, expected, token
             )

@@ -21,7 +21,7 @@ import urllib.parse
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from pharmacy.auth.scopes import ROLE_SCOPES
+from pharmacy.auth.scopes import scopes_for_roles
 
 from .seed_auth import UI_APPLICATION, Logto, admin_credentials
 
@@ -69,9 +69,8 @@ class Command(BaseCommand):
 
         scopes = options["scopes"]
         if scopes is None:
-            scopes = set()
-            for role in logto.api("GET", f"/users/{user['id']}/roles", token=token):
-                scopes |= {str(s) for s in ROLE_SCOPES.get(role["name"], ())}
+            roles = logto.api("GET", f"/users/{user['id']}/roles", token=token)
+            scopes = {str(s) for s in scopes_for_roles(role["name"] for role in roles)}
         self.stdout.write(
             logto.user_token(user["id"], app["id"], settings.AUTH_AUDIENCE, scopes, token)
         )

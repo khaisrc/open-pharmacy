@@ -23,7 +23,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from pharmacy.auth import claims as c
-from pharmacy.auth.scopes import ROLE_SCOPES
+from pharmacy.auth.scopes import scopes_for_roles
 from pharmacy.auth.verifier import DEV_KID
 
 
@@ -78,9 +78,7 @@ class Command(BaseCommand):
         roles = options["roles"]
         scopes = options["scopes"]
         if scopes is None:
-            scopes = set()
-            for role in roles:
-                scopes |= ROLE_SCOPES.get(role, frozenset())
+            scopes = scopes_for_roles(roles)
         now = int(time.time())
         derived_sub = "dev-" + uuid.uuid5(uuid.NAMESPACE_URL, options["email"]).hex[:12]
         claims = {
@@ -88,7 +86,7 @@ class Command(BaseCommand):
             c.SUBJECT: options["sub"] or derived_sub,
             "iat": now,
             "exp": now + options["ttl"],
-            "iss": settings.AUTH_ISSUER.rstrip("/"),
+            "iss": settings.AUTH_ISSUER,
             "aud": settings.AUTH_AUDIENCE,
             "client_id": "mint_token",
             c.SCOPE: " ".join(sorted(str(s) for s in scopes)),
