@@ -85,9 +85,12 @@ services:
       - "${AUTH_PORT:-8441}:3001"
       - "${AUTH_CONSOLE_PORT:-8442}:3002"
 
-  # One-shot: creates the identity server's first admin from
-  # AUTH_ADMIN_USERNAME / AUTH_ADMIN_PASSWORD in .env.local, so a fresh stack
-  # has a console login without the Welcome page. Idempotent, like migrate.
+  # One-shot, like migrate: seeds the identity provider -- its first admin
+  # (AUTH_ADMIN_USERNAME / AUTH_ADMIN_PASSWORD in .env.local), the API
+  # resource, scopes, roles and token customizer this API needs, the UI
+  # application, and the test users in docs/identity-providers/test-users.md
+  # (employed by the home pharmacy, hence after migrate). Idempotent, and it
+  # checks every test user's token the way the API reads one.
   auth-seed:
     build: .
     env_file: .env.local
@@ -95,12 +98,14 @@ services:
     depends_on:
       auth:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       ADMIN_ENDPOINT: http://127.0.0.1:${AUTH_CONSOLE_PORT:-8442}
-      AUTH_INTERNAL_ADMIN_ENDPOINT: http://auth:3002
+      AUTH_INTERNAL_CONSOLE_URL: http://auth:3002
     volumes:
       - .:/app
-    command: ["python", "scripts/create_auth_admin.py"]
+    command: ["python", "manage.py", "seed_auth"]
 
   web:
     build: .
