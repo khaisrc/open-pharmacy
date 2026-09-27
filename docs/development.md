@@ -102,7 +102,7 @@ accepts locally:
 ```bash
 docker compose run --rm web python manage.py mint_token --generate-key   # once; paste into .env.local
 docker compose run --rm web python manage.py mint_token --email rph@example.local \
-    --roles pharmacist --pharmacy <pharmacy uuid> --registration NY RPH.023417
+    --roles pharmacist --pharmacy <pharmacy uuid> --registration NY RPH.900001
 ```
 
 The key is read by `local.py` only, so the command and the tokens it mints

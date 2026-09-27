@@ -9,13 +9,13 @@ username or the email.
 
 | Username | Email | Name | Roles | Credentials | Supervisor |
 |---|---|---|---|---|---|
-| `elena_ortiz` | `elena.ortiz@open-pharmacy.local` | Elena Ortiz | pharmacist | registration NY RPH.023417 | -- |
-| `brendan_walsh` | `brendan.walsh@open-pharmacy.local` | Brendan Walsh | pharmacist | registration NY RPH.031205 | -- |
-| `soojin_kim` | `soojin.kim@open-pharmacy.local` | Soo-jin Kim | certified_technician | registration NY RPT.118902; PTCB 10021987 | -- |
-| `marcus_bell` | `marcus.bell@open-pharmacy.local` | Marcus Bell | certified_technician | registration NY RPT.118903; PTCB 10021988 | -- |
-| `priya_natarajan` | `priya.natarajan@open-pharmacy.local` | Priya Natarajan | certified_technician | registration NY RPT.118904; PTCB 10021989 | -- |
-| `tomas_reyes` | `tomas.reyes@open-pharmacy.local` | Tomás Reyes | certified_technician | registration NY RPT.118905; PTCB 10021990 | -- |
-| `hannah_oconnell` | `hannah.oconnell@open-pharmacy.local` | Hannah O'Connell | certified_technician | registration NY RPT.118906; PTCB 10021991 | -- |
+| `elena_ortiz` | `elena.ortiz@open-pharmacy.local` | Elena Ortiz | pharmacist | registration NY RPH.140001 | -- |
+| `brendan_walsh` | `brendan.walsh@open-pharmacy.local` | Brendan Walsh | pharmacist | registration NY RPH.140002 | -- |
+| `soojin_kim` | `soojin.kim@open-pharmacy.local` | Soo-jin Kim | certified_technician | registration NY RPT.240001; PTCB 20240001 | -- |
+| `marcus_bell` | `marcus.bell@open-pharmacy.local` | Marcus Bell | certified_technician | registration NY RPT.240002; PTCB 20240002 | -- |
+| `priya_natarajan` | `priya.natarajan@open-pharmacy.local` | Priya Natarajan | certified_technician | registration NY RPT.240003; PTCB 20240003 | -- |
+| `tomas_reyes` | `tomas.reyes@open-pharmacy.local` | Tomás Reyes | certified_technician | registration NY RPT.240004; PTCB 20240004 | -- |
+| `hannah_oconnell` | `hannah.oconnell@open-pharmacy.local` | Hannah O'Connell | certified_technician | registration NY RPT.240005; PTCB 20240005 | -- |
 | `marco_diaz` | `marco.diaz@open-pharmacy.local` | Marco Diaz | technician | -- | -- |
 | `aisha_rahman` | `aisha.rahman@open-pharmacy.local` | Aisha Rahman | technician | -- | -- |
 | `liam_chen` | `liam.chen@open-pharmacy.local` | Liam Chen | technician | -- | -- |
