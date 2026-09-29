@@ -1,96 +1,45 @@
 # E-prescribing: the erx-gateway, and what pharmacy-api needs for it
 
-Status: **proposed -- awaiting review. Nothing is implemented.**
+Status: **ready for review. Nothing is implemented.**
 
 Builds on `plans/auth/` (bearer tokens, scopes, `Staff` as the identity
 record) and `plans/rx-tx-fills/` (the service layer, `WriteContext`, the
 change history, the prescription lifecycle).
 
-Section 0 lists the questions that need an answer before work starts.
-Everything after it is the design as I would build it, with the decisions
-named so a different answer to a question changes a known paragraph rather
-than the whole plan.
-
 ---
 
-## 0. Questions and decisions
+## 0. Decisions
 
-Most questions are answered; the answers are recorded here as decisions,
-each pointing at the paragraph that implements it. §0.2 is what is still
-open.
+The choices the design rests on, each with its reason and the section that
+implements it. Everything below is settled; the body of the plan is the
+design that follows from these.
 
-### 0.1 Decided
-
-| # | Decision | Where |
+| Decision | Why | Where |
 |---|---|---|
-| Q1 | The six 2017071 XSD files are **committed** under `services/erx-gateway/standards/ncpdp/script/schema/2017071/` (your path said `201701`; I read that as the release number 2017071 -- say so if you meant something else). The rest of `ncpdp-main/` stays git-ignored. | §5.1 |
-| Q2a | The vendor is not Surescripts but behaves like it; there is no implementation guide and no sandbox. So the **`vendor-sim` is the only counterparty we can test against**, and the gateway's vendor-facing behaviour is specified by this plan and the schema alone. | §8.3 |
-| Q2b | Inbound is a plain HTTPS `POST` with the SCRIPT XML as the body. | §5.3 |
-| Q2c | The vendor authenticates with **Basic credentials**. | §5.2 |
-| Q2d | A transient refusal is **both** the SCRIPT `Error 600` body and HTTP 503. | §5.3, §5.4 |
-| Q2e | Outbound messages are `POST`ed to the vendor with **Basic credentials**. The vendor imposes no response window; **we** set one: `ERX_RESPONSE_DEADLINE` (default 48 h) bounds how long a `CancelRxResponse` may stay unsent, and **a pharmacist can trigger the response** before then. | §4.3.5, §5.8 |
-| Q2f | `ReturnReceipt` and `TestMessage`: not core. Both stay in (cheap, and `TestMessage` protects the pharmacy from test traffic becoming real prescriptions), with one unit test each and no e2e case. | §5.3, §5.4 |
-| Q3 | A pharmacy is **matched, never created**. A message whose `To`/pharmacy block does not match this deployment is **not refused**: it is acknowledged, and intake parks it in the review queue (`needs_review`, `unknown_pharmacy`) for a person to route or reject. The gateway therefore needs no knowledge of the pharmacy's identifiers. The intake call carries `pharmacy_ncpdp_id` (required) and `pharmacy_npi` (when the message has it). | §4.3.3, §5.3 |
-| Q4 | **LocalStack** in Compose and CI, **moto** in process for unit tests. Plus an end-to-end check, outside the existing `e2e/` folder, that a received message is persisted as an XML object in the bucket. | §6.1, §8.3 |
-| Q5 | **`django.tasks` + `django-tasks-db`**, not Celery. | §6.2 |
-| Q6 | **Redis now**, as the gateway's cache. | §6.3 |
-| Q7 | Intake is **synchronous and idempotent** inside pharmacy-api; no queue there. | §4.3 |
-| Q8 | The gateway hands pharmacy-api a **canonical JSON document**; raw XML on request. | §5.6 |
-| Q9 | Idempotency is keyed on the SCRIPT `MessageID` with natural-key matching; no generic `Idempotency-Key` header this round. | §4.3.3 |
-| Q10 | Patient matching: exact normalized `(last_name, first_name, dob)`, `FormerName` as a second key; several matches -> review. | §4.3.3 |
-| Q15 | A `CancelRx` against a prescription with a fill in flight is **parked for a pharmacist with a deadline**, and auto-denied when the deadline passes. | §4.3.4, §4.3.5 |
-| Q16 | A controlled-substance `NewRx` (any `DEASchedule`) is ingested like any other **and flagged for review**, because this pharmacy does not dispense controlled substances; the prescription is created `on_hold` until a pharmacist decides. | §4.3.5, §4.4 |
-| Q17 | This file lives at `plans/e-prescribing/plan.md`. | -- |
-
-### 0.2 Still open (you said you would answer after reviewing the plan)
-
-**Q11. Four relaxations of existing model rules that SCRIPT forces** (each
-changes current API behaviour, so I want an explicit yes per item):
-`Patient.phone_number` becomes optional (the schema makes a patient's
-`CommunicationNumbers` optional); `Medication.ndc` becomes optional
-(unique when set) with `rxnorm_code` beside it (`ProductCode` is optional
-and must not be sent for a compound); `Prescription.dose_amount` becomes
-optional (no SCRIPT element outside the structured sig); non-integral
-`Quantity` values (legal per the schema's `n1..11` pattern) are routed to
-`needs_review` rather than widening `quantity` to a decimal in this round.
-Details and the reasoning in §4.4.
-
-**Q12. Local machine-to-machine credentials.** Logto generates M2M secrets
-and offers no way to choose them (verified, §2.2), so the local stack uses
-dev-signed service tokens in the default (no `auth` profile) stack and CI --
-exactly the `mint_token` pattern staff tokens already use -- and real
-client-credentials tokens when the `auth` profile is up, with the seed
-writing the generated secrets to a git-ignored env file. (§4.2.3.)
-
-**Q13. The gateway gets its own small token verifier** (issuer, audience,
-scopes, the dev key locally) rather than a shared workspace package. About
-150 lines duplicated against a `packages/` member that every image would
-then have to carry; the duplication is the cheaper wrong. (§5.2.)
-
-**Q14. Audit attribution for a service actor**: `FieldChange` gains
-`changed_by_service` (the client id), and the exactly-one check becomes
-exactly-one-of-three. (§4.2.2.)
-
-**Q18 (new, from Q4). Where the gateway's end-to-end tests live.** You
-asked for an end-to-end check of the bucket without touching `e2e/`. I
-read that as: `e2e/` stays the pharmacy-api suite exactly as it is, and the
-gateway gets its own suite at `services/erx-gateway/e2e/` -- pytest
-against the running Compose stack, driving the vendor side with `httpx`
-and checking the bucket with `boto3` (§8.3). The original brief's "e2e
-should run for all services" is then the CI job running both suites. One
-unavoidable contact with `e2e/`: its default `E2E_MINT_CMD` names the
-Compose service `web`, which Stage 1 renames; I will set the variable from
-the Makefile and CI rather than edit the folder. Confirm, or tell me where
-you want the gateway's suite.
-
-**Q19 (new, from Q15 and Q2e). Review deadlines are driven by the
-gateway.** pharmacy-api has no worker (Q7), so something must act when a
-parked cancel's deadline passes. The gateway's sweep already polls
-intakes; it will call pharmacy-api's `expire` action on a review past its
-deadline, which pharmacy-api applies idempotently (§4.3.5). Alternative:
-a tiny `manage.py expire_reviews` cron in pharmacy-api. I prefer the
-first (one scheduler, and the gateway is the party that owes the vendor a
-response); say if you want the second.
+| The NCPDP SCRIPT 2017071 XSD set (six files) is committed under `services/erx-gateway/standards/ncpdp/script/schema/2017071/`. | The gateway cannot validate without it and CI builds from the repository. Nothing else from the reference collection is committed. | §5.1 |
+| The vendor is not Surescripts but behaves like it; there is no implementation guide and no sandbox. | The `vendor-sim` is the only counterparty the gateway is exercised against before production, so its behaviour is held strictly to the schema. | §8.3 |
+| Inbound: plain HTTPS `POST`, the SCRIPT XML as the body, Basic credentials. | What the vendor does. TLS and IP restrictions belong to the proxy. | §5.2, §5.3 |
+| A transient refusal is both the SCRIPT `Error 600` body and HTTP 503. | Whichever the vendor reads, it retries. | §5.3, §5.4 |
+| Outbound: `POST` to the vendor with Basic credentials. The vendor imposes no response window; this service sets one, `ERX_RESPONSE_DEADLINE` (48 h), bounding how long a `CancelRxResponse` may stay unsent and how long a parked cancel waits for a pharmacist, who can also trigger the response earlier. | A response must not be owed forever, and a pharmacist must be able to answer now. | §4.3.5, §5.8 |
+| `ReturnReceipt` and `TestMessage` are honoured but are not core: one unit test each, no e2e case. | Cheap; `TestMessage` keeps test traffic from becoming real prescriptions. | §5.3, §5.4 |
+| A pharmacy is matched, never created. A message addressed to a pharmacy this deployment does not serve is acknowledged and parked for review, not refused. The intake call carries the NCPDP ID (always in the header) and the NPI when the message has it. | The `Pharmacy` block of a `NewRx` is optional in the schema; the header's `To` is always there. Routing mistakes are a person's call. | §4.3.3, §5.3 |
+| Object storage: LocalStack in Compose and CI, moto in process for unit tests. The e2e suite verifies a received message is persisted as an XML object in the bucket. | Fidelity to S3 outranks footprint; the suite proves the integration, not the library. | §6.1, §8.3 |
+| Task queue: `django.tasks` with `django-tasks-db`, not Celery. | Enqueue is an INSERT in the caller's transaction: a message row can never be committed without its task. | §6.2 |
+| Redis, now, as the gateway's cache. | Shared throttle buckets and token cache across replicas; small. | §6.3 |
+| Intake is synchronous and idempotent inside pharmacy-api; no queue there. | One retry engine (the gateway's task) is enough at this volume. | §4.3 |
+| The gateway hands pharmacy-api a canonical JSON document; the raw XML on request. | SCRIPT parsing lives in exactly one service. | §5.6 |
+| Idempotency is keyed on the SCRIPT `MessageID`, with natural-key matching underneath; no generic `Idempotency-Key` header. | The gateway never calls the public create endpoints. | §4.3.3 |
+| Patient matching: exact normalized `(last_name, first_name, dob)` among live rows, `FormerName` as a second key; several matches go to review, never a guess. | Wrong-patient is the error a pharmacy must not make. | §4.3.3 |
+| `Patient.phone_number`, `Medication.ndc` and `Prescription.dose_amount` become optional. | The schema makes a patient's phone optional, forbids an NDC on a compound, and has no dose element outside the structured sig. | §4.4 |
+| A new prescription status, `needs_review`, is the parking state for every prescription intake creates but a pharmacist has not cleared (no NDC, controlled substance, `DoNotFill`, emergency cover, compound). `on_hold` keeps its current meaning. | Such a prescription must exist and must not be fillable, and "on hold" already means a pause of an active one. | §4.5 |
+| `Prescription.quantity` and `Fill.quantity_dispensed` become decimals. | The schema's quantity is `[0-9]+(\.[0-9]+)?`; liquids and units are real. | §4.5 |
+| A `CancelRx` against a prescription with a fill in flight is parked for a pharmacist with a deadline and auto-denied when it passes. | The pharmacist, not a rule, decides whether to stop a fill in progress. | §4.3.4, §4.3.5 |
+| A controlled-substance `NewRx` is ingested like any other and parked for review. | This pharmacy does not dispense controlled substances; the record must still exist. | §4.3.5, §4.4 |
+| A service actor is recognized by `sub == client_id`; its writes are attributed through `FieldChange.changed_by_service`. | RFC 9068 and what Logto emits; the audit trail must name the actor. | §4.2 |
+| Locally, service-to-service tokens are dev-signed with the committed `AUTH_DEV_SIGNING_KEY`, in every local mode and in CI. The real client-credentials path is exercised by `seed_auth`, which creates the M2M applications and checks a real token from each. | Easiest for local development: nothing to restart, no secret to hand around (Logto generates M2M secrets and cannot be given one), and the real grant is still proven on every seed. | §4.2.3 |
+| The provider-neutral auth code is a workspace package, `packages/pharmacy-auth`, used by both services. | The gateway must verify the token pharmacy-api presents; sharing beats duplicating. | §3.2, §4.2.0, §5.2 |
+| One e2e suite, the bash one, with cases split per service; the bucket check is curl against LocalStack. | One style, as `AGENTS.md` asks; no second harness. | §8.3 |
+| Review deadlines are driven by the gateway's sweep calling pharmacy-api's `expire` action. | pharmacy-api has no worker; the gateway is the party that owes the vendor a response and already polls. | §4.3.5, §5.8 |
 
 ---
 
@@ -102,8 +51,7 @@ In scope:
    uv workspace with one lock, one Dockerfile per service built from the
    root with only that service's dependencies and source, the Compose
    service renamed `web` -> `pharmacy-api`, a migrate step and environment
-   files per service, CI per service, end-to-end coverage for both
-   (the existing `e2e/` untouched).
+   files per service, CI per service, e2e across both.
 2. **pharmacy-api**: a service (machine-to-machine) principal that is not a
    `Staff` row; an idempotent intake endpoint the gateway calls; the model
    additions a `NewRx`/`CancelRx` carries that the domain should keep; the
@@ -113,8 +61,8 @@ In scope:
    over HTTP, persists every raw message to object storage before
    acknowledging, validates against the schema, answers with the SCRIPT
    `Status` or `Error` message, then drives intake through pharmacy-api and
-   sends the `CancelRxResponse` (and `Verify`/`Error`, if the vendor
-   supports them) back to the vendor, with retries and a defined failure
+   sends the `CancelRxResponse` (and `Verify` when a return receipt was
+   asked for) back to the vendor, with retries and a defined failure
    model.
 
 Out of scope (deliberately, noted where the design leaves a seam): every
@@ -129,8 +77,8 @@ metrics/tracing beyond structured logs; multi-pharmacy deployments.
 
 ## 2. Facts the design rests on
 
-Checked on this machine against the uploaded code and a running Logto
-1.43, the way `plans/auth/plan.md` §8.2 did.
+Checked against the code and a running Logto 1.43, the way
+`plans/auth/plan.md` §8.2 did.
 
 ### 2.1 The repository
 
@@ -176,7 +124,7 @@ Checked on this machine against the uploaded code and a running Logto
   accept one of its choosing.
 - Today the API answers that token with 401 `token_without_email`.
 
-### 2.3 Libraries (versions on the index reachable here)
+### 2.3 Libraries
 
 - Django 6.1 ships the `django.tasks` API (DEP 14) with only the
   `ImmediateBackend` and `DummyBackend`. The database worker is the separate
@@ -188,12 +136,10 @@ Checked on this machine against the uploaded code and a running Logto
 - Celery 5.6.3, redis 8.1, django-redis 7.0, boto3 1.43, moto 5.2,
   lxml 6.1, httpx 0.28 are all available (`xmlschema` 4.3 too, but §2.4
   rules it out).
-- The index here is a snapshot that lags `uv.lock` by a patch version on
-  three packages; `uv lock` must be run where the real index is reachable
-  (CI or your machine) after the workspace change. I will not rewrite the
-  lock by hand.
+- `uv lock` is regenerated after the workspace change where the real
+  package index is reachable; the lock is never edited by hand.
 
-### 2.4 The SCRIPT 2017071 schema (from the provided XSD set)
+### 2.4 The SCRIPT 2017071 schema
 
 **Shape.** Six files, no target namespace (instances are unqualified);
 `transport.xsd` is the entry point. The root is `<Message>` with six
@@ -329,10 +275,10 @@ mandatory), `Supervisor`?, `Facility`?, `ChangeOfPrescriptionStatusFlag`?;
 the header's `RxReferenceNumber`, `PrescriberOrderNumber` and
 `RelatesToMessageID` are what identify the prescription.
 
-Not in the set: a `CancelRx` or `CancelRxResponse` example. I will author
-those fixtures against the schema in Stage 3; the provided `NewRx` example
-(Nurtec ODT, NDC `72618300002`, quantity 8, 3 refills) becomes the first
-fixture as-is.
+Not in the set: a `CancelRx` or `CancelRxResponse` example. Those
+fixtures are authored against the schema in Stage 3; the provided `NewRx`
+example (Nurtec ODT, NDC `72618300002`, quantity 8, 3 refills) becomes the
+first fixture as-is.
 
 ---
 
@@ -341,9 +287,11 @@ fixture as-is.
 ### 3.1 Layout
 
 ```text
-pyproject.toml                 # workspace root: [tool.uv.workspace] members = ["services/*"];
+pyproject.toml                 # workspace root: [tool.uv.workspace] members = ["services/*", "packages/*"];
                                # the ruff configuration (one style for both services); dev group: ruff
 uv.lock                        # the single lock, covering both members
+packages/
+  pharmacy-auth/               # the shared auth package (§4.2.0): pyproject.toml, pharmacy_auth/, tests/
 services/
   pharmacy-api/                # everything that is at the root today, moved with `git mv`
     pyproject.toml             # name "open-pharmacy-api"; its own dependencies and dev group
@@ -356,7 +304,7 @@ services/
     Dockerfile  Dockerfile.dockerignore
     manage.py  config/  erx/
     .env.local  .env.example
-e2e/                           # untouched: the pharmacy-api suite as it is today (Q18)
+e2e/                           # stays at the root; cases split per service (§8.3)
 docker-compose.yml  Makefile  AGENTS.md  README.md  docs/  plans/  .github/  scripts/
 ```
 
@@ -375,16 +323,24 @@ docker-compose.yml  Makefile  AGENTS.md  README.md  docs/  plans/  .github/  scr
   `[dependency-groups] dev` (pytest, pytest-django, factory-boy, pgserver
   for pharmacy-api; pytest, pytest-django, moto, respx-or-equivalent for
   the gateway) and its own `[tool.pytest.ini_options]`.
-- One `uv.lock`; `uv sync --package <name>` installs one member's closure.
+- `packages/pharmacy-auth` is a workspace member both services depend on
+  through `[tool.uv.sources] pharmacy-auth = { workspace = true }`. It
+  depends on Django, DRF, drf-spectacular and PyJWT only; its tests run
+  with a minimal settings module of its own.
+- One `uv.lock`; `uv sync --package <name>` installs one member's closure,
+  the shared package included.
 
 ### 3.3 One Dockerfile per service, built from the root
 
 Two stages, so the final image holds only the service's venv and source:
 
-1. `builder`: copy the root `pyproject.toml`, `uv.lock` and **every**
+1. `builder`: copy the root `pyproject.toml`, `uv.lock`, **every**
    member's `pyproject.toml` (uv needs all members to load the workspace,
-   even when syncing one), then `uv sync --locked --package <name>
-   --no-install-project --no-dev` into `/opt/venv`.
+   even when syncing one) and `packages/pharmacy-auth/` (its source must
+   be present to be installed), then `uv sync --locked --package <name>
+   --no-install-project --no-dev --no-editable` into `/opt/venv`, so the
+   shared package is copied into the venv rather than linked to a
+   checkout.
 2. `app`: copy `/opt/venv`, copy `services/<name>/` only, `collectstatic`,
    unprivileged user, no entrypoint (migrations never run at boot -- the
    existing rule, unchanged). Default `CMD` is `runserver` locally,
@@ -417,9 +373,8 @@ tables, by construction, and the deployed tiers give each service its own
 role).
 
 Makefile: `units`, `lint` and `format` take `SERVICE=` (default both, run
-in sequence); `e2e` brings up the whole stack and runs both suites,
-passing `E2E_MINT_CMD` to the bash one so `e2e/` itself needs no edit;
-`token` targets `pharmacy-api`.
+in sequence); `e2e` brings up the whole stack and runs the suite; `token`
+targets `pharmacy-api`.
 
 ### 3.5 CI
 
@@ -427,13 +382,13 @@ passing `E2E_MINT_CMD` to the bash one so `e2e/` itself needs no edit;
   `test` and `lint` jobs -- build that service's image, run pytest with the
   junit summary, ruff check/format, `makemigrations --check`, and
   `spectacular --fail-on-warn` (both services serve a schema). The PR
-  comment names the service.
+  comment names the service. A third matrix entry, `pharmacy-auth`, runs
+  the shared package's tests and ruff in the pharmacy-api image (it is
+  installed there).
 - `e2e.yml`: `docker compose up -d --build pharmacy-api erx-gateway
   erx-gateway-worker vendor-sim`, wait on both health endpoints, run
-  `E2E_MINT_CMD="docker compose exec -T pharmacy-api python manage.py
-  mint_token" ./e2e/run.sh` (the folder itself untouched, Q18), then the
-  gateway's suite (`docker compose run --rm erx-gateway pytest e2e/`),
-  upload both reports, dump both services' logs on failure.
+  `./e2e/run.sh` (both services' cases, §8.3), upload the report, dump
+  both services' logs on failure.
 
 No path filtering: both services run on every push, which keeps the matrix
 honest while the gateway is young.
@@ -462,6 +417,24 @@ Twenty-five scopes. `ROLE_SCOPES` grows accordingly; the seed tops roles up
 as it already does; `test-users.md`'s scope table is updated.
 
 ### 4.2 A service principal
+
+#### 4.2.0 The shared package
+
+`packages/pharmacy-auth` (import name `pharmacy_auth`) takes what
+`pharmacy/auth/` has that knows nothing about staff: `claims.py`,
+`providers/{base,oidc,logto}.py`, `verifier.py`, `principal.py`
+(`Principal` without the `staff` field -- a service keeps a plain
+principal; pharmacy-api subclasses it to add `staff`), `permissions.py`
+(`HasScope`), `schema.py` (`BearerScheme`), the dev-key signing that
+`mint_token` uses, plus two new modules: `service.py` (`is_service_token`,
+§4.2.1) and `client.py` (a client-credentials token client with caching
+and the dev-signed fallback, §4.2.3). Settings it reads are passed in by
+the host app (`AUTH_ISSUER`, `AUTH_INTERNAL_URL`, the audience, the dev
+key), never imported from a project. `pharmacy/auth/` keeps
+`authentication.py` (the `Staff` resolution) and `scopes.py` (the scope
+names are pharmacy-api's vocabulary; the gateway has its own three). The
+existing `test_providers.py`, the verifier and principal tests move with
+the code; `test_auth.py` stays.
 
 #### 4.2.1 Recognizing one
 
@@ -494,33 +467,35 @@ The exactly-one CHECK becomes exactly one of `changed_by_user`,
 `history.record` set it. Migration `0012_service_actor`. The
 `ErxIntake` row (§4.3.2) is what ties the change rows back to the message.
 
-#### 4.2.3 At the identity provider
+#### 4.2.3 At the identity provider, and locally
 
 `seed_auth` (and `docs/identity-providers/logto.md` for other
 environments) adds:
 
 1. A second **API resource** for the gateway, indicator
    `ERX_AUTH_AUDIENCE` (`https://erx-gateway.open-pharmacy.local` locally),
-   TTL 900 s, with the scope `erx:messages:read`.
+   TTL 900 s, with the scopes `erx:messages:read` and `erx:messages:retry`.
 2. Two **M2M applications** and **M2M roles**: `erx-gateway` (role grants
    `erx:intake` on the pharmacy-api resource) and `pharmacy-api` (role
-   grants `erx:messages:read` on the gateway resource).
-3. The seed reads each application's default secret and writes
-   `services/erx-gateway/.env.m2m.local` and
-   `services/pharmacy-api/.env.m2m.local` (git-ignored; `AUTH_CLIENT_ID`,
-   `AUTH_CLIENT_SECRET`), which Compose passes with `env_file: {path,
-   required: false}`. A restart of the two services after the first seed
-   picks them up; the seed's final line says so.
-4. The seed **checks** both: a client-credentials token per application,
-   verified through the adapter, scopes compared -- the same "a token the
-   API would refuse fails the seed" rule the test users have.
+   grants the two gateway scopes on the gateway resource).
+3. A **check** of both: a client-credentials token per application,
+   obtained with the secret Logto generated (readable through the
+   Management API), verified through the adapter, scopes compared -- the
+   same "a token the API would refuse fails the seed" rule the test users
+   have. In a deployed tier the client id and secret of each application
+   go into the other service's environment (`AUTH_CLIENT_ID`,
+   `AUTH_CLIENT_SECRET`).
 
-Locally without the `auth` profile, and in CI, each service signs its own
-service token with `AUTH_DEV_SIGNING_KEY` (`sub = client_id =
-"erx-gateway-local"`, kid = the dev kid), which the other service's
-verifier accepts only while `local.py` sets the key -- the `mint_token`
-rule, unchanged. `mint_token --service <client-id> --scopes ...` is added
-for the gateway's e2e suite and for curl.
+Locally the services never hold those secrets. In every local mode --
+with or without the `auth` profile -- and in CI, each service signs its
+own service token with `AUTH_DEV_SIGNING_KEY` (`sub = client_id =
+"erx-gateway-local"` / `"pharmacy-api-local"`, kid = the dev kid), and the
+other service's verifier accepts it only while `local.py` sets the key:
+the `mint_token` rule, unchanged. So there is nothing to restart and no
+file to hand around, and the real grant is still proven by the seed on
+every boot of the `auth` profile. `pharmacy_auth.client` picks the mode
+from whether `AUTH_CLIENT_SECRET` is set. `mint_token --service
+<client-id> --scopes ...` is added for the e2e suite and for curl.
 
 ### 4.3 The intake endpoint
 
@@ -534,7 +509,7 @@ for the gateway's e2e suite and for curl.
 
 `pharmacy_ncpdp_id` is the header's `To` and always present;
 `pharmacy_npi` is sent when the message's optional `Pharmacy` block is
-there (Q3). Response: the intake record.
+there. Response: the intake record.
 
 ```json
 {
@@ -592,7 +567,7 @@ nullable FKs `pharmacy_location` (null while `unknown_pharmacy`),
 3. **Resolve the pharmacy.** The location by NCPDP ID (always sent),
    cross-checked against the NPI when one is sent. It must be a live
    `PharmacyLocation` of this deployment; anything else parks the intake
-   as `needs_review` (`unknown_pharmacy`) with no records made (Q3): a
+   as `needs_review` (`unknown_pharmacy`) with no records made: a
    person routes it to a location (`resolve` with `pharmacy_location_id`,
    which re-runs from here) or rejects it.
 4. **Match or create, under natural keys, each in the same transaction:**
@@ -605,7 +580,7 @@ nullable FKs `pharmacy_location` (null while `unknown_pharmacy`),
    - **Medication** by NDC when the message carries one, else by
      `rxnorm_code`, else by normalized `(name, strength, form)`; create
      otherwise.
-   - **Patient** per Q10: exact normalized `(last_name, first_name, dob)`
+   - **Patient**: exact normalized `(last_name, first_name, dob)`
      among live rows, trying `FormerName` as a second key when the current
      name finds nothing; one match -> reuse; none -> create with the
      address the message carries (a new `Address` row); several ->
@@ -613,12 +588,13 @@ nullable FKs `pharmacy_location` (null while `unknown_pharmacy`),
      `outcome`.
    - **Prescription** via `services.prescriptions.create` (so it is
      numbered, audited and routed exactly like one typed in), with
-     `intake_source = electronic` and the fields in §4.4. A
-     `DEASchedule` (Q16), a `DoNotFill` of `Y`/`H`, or an `E` creates it
-     **`on_hold`** and the intake ends `needs_review` instead of
-     `completed` (`controlled_substance`, `do_not_fill`,
-     `emergency_cover`): the record exists, nothing can be filled, and a
-     pharmacist decides.
+     `intake_source = electronic` and the fields in §4.4. A medication
+     without an NDC, a `DEASchedule`, a `DoNotFill`, or a
+     compound creates it with status **`needs_review`** (§4.5) and the
+     intake ends `needs_review` instead of `completed`
+     (`medication_unidentified`, `controlled_substance`, `do_not_fill`,
+     `emergency_cover`, `compound_prescription`): the record exists,
+     nothing can be filled, and a pharmacist decides.
 5. **Complete.** `status=completed`, FKs and `outcome` set, lease cleared.
    Steps 4-5 are one transaction, so a crash leaves no half-made records --
    the next attempt starts again from step 3 and finds nothing to reuse
@@ -641,7 +617,7 @@ as our Rx number. Then:
 | already cancelled | `approved` (idempotent: the prescriber's intent is already true) | `Approved` + `Note` "already cancelled" |
 | expired | `approved` (nothing will be dispensed) | `Approved` + `Note` "had expired on <date>" |
 | completed, or any fill completed | `denied`, `already_dispensed` | `Denied` + `DenialReason` "dispensed on <date>; <qty> of <authorized> dispensed" |
-| fill in flight | **parked**: `needs_review` (`cancel_with_fill_in_flight`) with `review_deadline_at = now + ERX_RESPONSE_DEADLINE` (Q15). The pharmacist cancels the fill and approves, or denies; at the deadline it is auto-denied (§4.3.5) | after the decision: `Approved`, or `Denied` + `DenialReason` "a fill was in progress" / the pharmacist's note |
+| fill in flight | **parked**: `needs_review` (`cancel_with_fill_in_flight`) with `review_deadline_at = now + ERX_RESPONSE_DEADLINE`. The pharmacist cancels the fill and approves, or denies; at the deadline it is auto-denied (§4.3.5) | after the decision: `Approved`, or `Denied` + `DenialReason` "a fill was in progress" / the pharmacist's note |
 | not found | `denied`, `not_found` | `Denied` + `DenialReason` "no matching prescription" |
 | the `NewRx` intake is still `processing` | transient: 409 `intake_in_progress`; the gateway retries, so a cancel that overtakes its own `NewRx` waits for it | -- |
 
@@ -662,15 +638,17 @@ each means:
 |---|---|---|
 | `unknown_pharmacy` | nothing | `{"pharmacy_location_id": …}` -> re-run from step 3; or `reject` |
 | `ambiguous_patient` | nothing | `{"patient_id": …}` (a candidate, or one made by hand) -> re-run from step 4; or `reject` |
-| `non_integral_quantity`, `quantity_sufficient`, `compound_prescription` | prescriber, medication, patient | `{"quantity": n, "days_supply"?: n}` -> create the prescription; or `reject` |
-| `controlled_substance`, `do_not_fill`, `emergency_cover` | everything, prescription `on_hold` | `accept` -> prescription `active` (for `do_not_fill` it stays `on_hold`: that is the instruction); or `reject` -> prescription cancelled |
+| `quantity_sufficient` | prescriber, medication, patient | `{"quantity": n, "days_supply"?: n}` -> create the prescription; or `reject` |
+| `medication_unidentified` (no NDC), `compound_prescription` | everything, prescription `needs_review` | `{"ndc": …}` or `{"medication_id": …}` (the pharmacist identifies the product, or points at an existing medication) -> prescription `active`; or `reject` -> prescription cancelled |
+| `controlled_substance`, `emergency_cover` | everything, prescription `needs_review` | `accept` -> prescription `active`; or `reject` -> prescription cancelled |
+| `do_not_fill` | everything, prescription `needs_review` | `accept` -> prescription `on_hold` (that is the prescriber's instruction); or `reject` -> cancelled |
 | `cancel_with_fill_in_flight` | the pending cancel | `approve` -> `services.prescriptions.cancel` (refused 409 `fill_in_progress` until the pharmacist has cancelled the fill); `deny` with a note; or the deadline passes |
 
 `POST /erx/intakes/{id}/resolve/` takes `{"action": "accept" | "reject" |
 "approve" | "deny" | "expire", "note"?, ...fields}`. `reject` sets
 `failed` with `error.code = "rejected_on_review"` and the note. `expire`
 is what the gateway's sweep calls when `review_deadline_at` has passed
-(Q19): on a parked cancel it records `denied` with `DenialReason` "no
+: on a parked cancel it records `denied` with `DenialReason` "no
 decision before the deadline"; on anything else it is a no-op (only a cancel
 owes the vendor an answer). Every action is idempotent on a resolved
 intake (200, unchanged).
@@ -705,7 +683,7 @@ document, retrievable and auditable, but is not a column.
 | `Gender` (`M`, `F`, `U`) | `gender` | M -> `male`, F -> `female`, U -> `unknown`; `other` is never produced from SCRIPT |
 | `DateOfBirth/Date` or `/DateTime` | `dob` | exists; a `DateTime` is taken as its date |
 | `Address/*` (mandatory in a `NewRx`) | `Address` | exists; `StateProvince`, `PostalCode`, `CountryCode` -> `state`, `postal_code`, `country`; a non-`US` country or a non-mailable US state/ZIP is `needs_review` (`unsupported_address`) |
-| `CommunicationNumbers/PrimaryTelephone` (`Number` 10 digits, `Extension`, `SupportsSMS`), the other phone kinds, `ElectronicMail` | `phone_number`, `email`, `sms_opt_in` | **relax** `phone_number` to optional (Q11): `CommunicationNumbers` is optional on a patient. `PrimaryTelephone` -> E.164 (`+1` + 10 digits), extension kept in message; `SupportsSMS = Y` does **not** set `sms_opt_in` (consent is granted to us, not relayed) |
+| `CommunicationNumbers/PrimaryTelephone` (`Number` 10 digits, `Extension`, `SupportsSMS`), the other phone kinds, `ElectronicMail` | `phone_number`, `email`, `sms_opt_in` | **relax** `phone_number` to optional: `CommunicationNumbers` is optional on a patient. `PrimaryTelephone` -> E.164 (`+1` + 10 digits), extension kept in message; `SupportsSMS = Y` does **not** set `sms_opt_in` (consent is granted to us, not relayed) |
 | `Identification/*` (EHR MRN, account number, Medicare, Medicaid, `SocialSecurity`, `MutuallyDefined`, `REMSPatientID`) | -- | keep in message; **SSN is redacted from the canonical document** and lives only in the raw XML in storage (a `PatientIdentifier` model is a later plan if matching needs the MRN) |
 | `PatientLocation`, `LanguageNameCode`, `SubstanceUse`, `AlternateContact`, `GestationalAge`, `HospiceIndicator` | -- | keep in message |
 | `NonHumanPatient` (veterinary) | -- | refused before the acknowledgement (§5.3) |
@@ -731,38 +709,38 @@ document, retrievable and auditable, but is not a column.
 #### Pharmacy (`Pharmacy`, optional in a `NewRx`)
 
 `NCPDPID` + `NPI` (both mandatory when the block is present),
-`BusinessName`, `Address`, `CommunicationNumbers`: used only to confirm
-the recipient (§5.3) and resolve the home location (§4.3.3); nothing
-added. The header's `To` is the routing key the gateway checks first.
+`BusinessName`, `Address`, `CommunicationNumbers`: used only to resolve
+the home location (§4.3.3); nothing added. The header's `To` is the
+key pharmacy-api resolves first.
 
 #### Medication (`MedicationPrescribed`)
 
 | SCRIPT | Ours | Action |
 |---|---|---|
 | `DrugDescription` (mandatory, 105) | `name` | exists; `name` is 255 wide |
-| `DrugCoded/ProductCode` with `Qualifier = ND` | `ndc` | **relax** `ndc` to optional, unique among live rows when set (Q11): `DrugCoded` and `ProductCode` are both optional, and "must not be sent" for a compound. Other qualifiers (`UP`, `DI`, `UN`, ...) are kept in message and do not populate `ndc` |
+| `DrugCoded/ProductCode` with `Qualifier = ND` | `ndc` | **relax** `ndc` to optional, unique among live rows when set: `DrugCoded` and `ProductCode` are both optional, and "must not be sent" for a compound. A medication without an NDC makes the prescription `needs_review` (`medication_unidentified`, §4.5) until a pharmacist supplies one. Other qualifiers (`UP`, `DI`, `UN`, ...) are kept in message and do not populate `ndc` |
 | `DrugCoded/DrugDBCode` with an RxNorm qualifier (`SCD`, `SBD`, `GPK`, `BPK`) | -- | **add** `rxnorm_code` (`CharField(12)`, blank, indexed) and `rxnorm_qualifier` (3); a non-RxNorm drug-database code is kept in message |
 | `DrugCoded/Strength/StrengthValue` (free text, 70) + `StrengthUnitOfMeasure` | `strength` | exists; `StrengthValue` as sent (the example carries `"75 MG"` in the value itself), the unit appended only when the value has no unit |
 | `DrugCoded/Strength/StrengthForm` (NCI code) | `form` | mapped to `MedicationForm` for the common NCI codes (tablet, capsule, solution/suspension -> `liquid`, injection, cream/ointment/gel -> `topical`), else `other`; **add** `form_code` (`CharField(16)`, blank) to keep the code |
-| `DrugCoded/DEASchedule` (NCI code; "required if a controlled substance") | -- | **add** `dea_schedule` (choices `CII`..`CV`, blank = not controlled), mapped from the NCI code. Any value -> the prescription is created `on_hold` and the intake is `needs_review` (`controlled_substance`), because this pharmacy does not dispense controlled substances (Q16) |
-| `CompoundInformation/*` | -- | `needs_review` (`compound_prescription`): the medication row is made with the description, no NDC, `form` from `FinalCompoundPharmaceuticalDosageForm`; a pharmacist confirms |
+| `DrugCoded/DEASchedule` (NCI code; "required if a controlled substance") | -- | **add** `dea_schedule` (choices `CII`..`CV`, blank = not controlled), mapped from the NCI code. Any value -> the prescription is created `needs_review` and so is the intake (`controlled_substance`), because this pharmacy does not dispense controlled substances |
+| `CompoundInformation/*` | -- | the medication row is made with the description, no NDC, `form` from `FinalCompoundPharmaceuticalDosageForm`; the prescription is `needs_review` (`compound_prescription`) and a pharmacist confirms |
 
 #### Prescription (`MedicationPrescribed`, continued)
 
 | SCRIPT | Ours | Action |
 |---|---|---|
-| `Quantity/Value` (mandatory; decimals legal) | `quantity` (positive integer) | integral values map directly; non-integral -> `needs_review` (`non_integral_quantity`) in this round (Q11). Widening `quantity` and `Fill.quantity_dispensed` to decimals touches every total, the fill rules and the e2e suite; it is its own plan if liquids and insulin units need it |
-| `Quantity/CodeListQualifier` | -- | must be `38` (original quantity); `QS` (quantity sufficient) -> `needs_review` (`quantity_sufficient`) since the pharmacist sets the quantity; any other value is refused before the acknowledgement as content invalid for a `NewRx` |
+| `Quantity/Value` (mandatory; decimals legal) | `quantity` | **widen** to a decimal (§4.5); mapped as sent |
+| `Quantity/CodeListQualifier` | -- | must be `38` (original quantity); `QS` (quantity sufficient) -> `needs_review` (`quantity_sufficient`) with no prescription yet, since the pharmacist sets the quantity; any other value is refused before the acknowledgement as content invalid for a `NewRx` |
 | `Quantity/QuantityUnitOfMeasure/Code` (NCI) | -- | **add** `quantity_unit` (`CharField(16)`, blank) |
 | `DaysSupply` | `Fill.days_supply` only | **add** `Prescription.days_supply` (nullable): what was prescribed, distinct from what each fill dispensed |
 | `Sig/SigText` (mandatory, 1000) + structured sig | `instructions` | exists; the structured sig is kept in message |
-| (no SCRIPT element) | `dose_amount` (required) | **relax** to optional (Q11); filled from the structured sig's dose when one is present |
+| (no SCRIPT element) | `dose_amount` (required) | **relax** to optional; filled from the structured sig's dose when one is present |
 | `NumberOfRefills` (mandatory) | `fills_authorized` | `refills + 1` |
 | `WrittenDate/Date` or `/DateTime` (mandatory) | `written_at` | exists; a written date after `SentTime` is refused before the acknowledgement (the schema says it must not be) |
 | `OtherMedicationDate` with `Qualifier = ExpirationDate` | `expires_at` | set when present; otherwise null -- state-law defaults are a later setting, not guessed here |
 | `OtherMedicationDate` with `Qualifier = EffectiveDate` (or `StartDate`) | -- | **add** `fill_not_before` (`DateField`, nullable); the fill service refuses to start a fill before it (409 `not_yet_fillable`) |
 | `Substitutions` (mandatory: `0` / `1`) | -- | **add** `substitution_allowed` (`BooleanField`, default True; `1` -> False) -- "dispense as written" changes what may be dispensed |
-| `DoNotFill` (`Y`, `H`, `E`) | `status`, `notes` | `Y` and `H` -> the prescription is created **`on_hold`** with the reason in `notes` and the intake is `needs_review` (`do_not_fill`) so a pharmacist sees it; `E` (cover for an emergency oral order) -> `on_hold` + `needs_review` (`emergency_cover`), since the emergency dispensing already happened and a pharmacist must reconcile it |
+| `DoNotFill` (`Y`, `H`, `E`) | `status`, `notes` | `Y` and `H` -> the prescription is created **`needs_review`** with the instruction in `notes` and the intake is `needs_review` (`do_not_fill`); a pharmacist's `accept` moves it to `on_hold` (the prescriber's instruction). `E` (cover for an emergency oral order) -> `needs_review` (`emergency_cover`), since the emergency dispensing already happened and a pharmacist must reconcile it |
 | `Note` (210) | `notes` | exists |
 | `Diagnosis/Primary`, `Secondary` (`Code`, `Qualifier` ABF/DX/LD, `Description`) | -- | **add** `diagnoses` (`JSONField`, a list of `{code, qualifier, description, rank}`); a `PrescriptionDiagnosis` model is not worth a five-module resource for two codes |
 | `PriorAuthorization` (35), `PriorAuthorizationStatus` | -- | **add** `prior_authorization` (`CharField(35)`, blank); the status kept in message |
@@ -772,17 +750,55 @@ added. The header's `To` is the routing key the gateway checks first.
 #### New models
 
 - `ErxIntake` (§4.3.2) -- pharmacy-api.
-- No others in pharmacy-api this round. The candidates I am deliberately
-  not creating yet, each a plan of its own when wanted: `PatientIdentifier`
+- No others in pharmacy-api. The candidates deliberately not created
+  yet, each a plan of its own when wanted: `PatientIdentifier`
   (external ids), `PatientCoverage` (insurance from
   `BenefitsCoordination`), `Allergy`, `Observation`, and a prescription's
   `supervising_prescriber`.
 
-Migrations: `0012_service_actor` (§4.2.2), `0013_erx_fields` (the adds and
-relaxations above), `0014_erx_intake`. The relaxations keep every existing
-row valid (a required field becoming optional needs no data migration).
-Serializers expose the new fields; `docs/api.md`, `prescriptions.md` and
-`errors.md` gain the codes above.
+Migrations: `0012_service_actor` (§4.2.2), `0013_erx_fields` (the adds,
+the relaxations, the new status, the decimal quantities), `0014_erx_intake`.
+The relaxations keep every existing row valid (a required field becoming
+optional needs no data migration; an integer column widening to a decimal
+converts in place). Serializers expose the new fields; `docs/api.md`,
+`prescriptions.md` and `errors.md` gain the codes above.
+
+### 4.5 Two changes to the prescription itself
+
+**A `needs_review` prescription status.** A prescription that arrived
+electronically but that a pharmacist has not yet cleared. It is the
+parking state for every reviewed intake that has produced a record
+(§4.3.5), so `on_hold` keeps its current meaning (a pause of an active
+prescription) and nothing parked can be filled. Transitions:
+
+| From | To | How |
+|---|---|---|
+| `needs_review` | `active` | the intake's `resolve/` (`accept`, or supplying the NDC / medication) |
+| `needs_review` | `on_hold` | `resolve/` `accept` on a `do_not_fill` intake |
+| `needs_review` | `cancelled` | `resolve/` `reject`, or `POST {id}/cancel/` |
+
+It is never set through `PATCH` (400, like the terminal statuses), never
+entered from another status, and a fill cannot be started on it (409
+`not_yet_fillable`, the code `fill_not_before` also uses). Only intake
+creates a prescription in it; a prescription typed in at the counter still
+starts `active`. `expire_if_due` ignores it (a lapsed review stays a
+review). `ALLOWED_TRANSITIONS`, the serializer's status validation, the
+fill service, the filters and `docs/prescriptions.md` all change.
+
+**Fractional quantities.** `Prescription.quantity` and
+`Fill.quantity_dispensed` become `DecimalField(max_digits=11,
+decimal_places=3)` (SCRIPT's `n1..11`; three places covers the units
+pharmacies dispense -- mL, grams, insulin units), with `> 0` replacing
+`>= 1` in the CHECK constraints and validators. The derived totals
+(`quantity_authorized`, `quantity_dispensed`, `quantity_in_progress`,
+`quantity_remaining`) are decimals; `fills_used`/`fills_remaining` already
+are. Serializers render them with `coerce_to_string=False` like
+`fills_used`, so a client that sent `30` reads back `30.0` -- the existing
+e2e assertions compare numerically and hold. `PositiveIntegerField` goes
+away from both models; the admin and the factories follow. This is the
+one change in the plan that touches existing behaviour on every
+prescription and fill, so it is its own commit in Stage 2b with the full
+suite as its gate.
 
 ---
 
@@ -810,14 +826,13 @@ services/erx-gateway/
     clients/       pharmacy_api.py  vendor.py  tokens.py
     tasks.py       (process_message, deliver, sweep)
     management/commands/  ensure_bucket  vendor_sim  mint_token
-  standards/ncpdp/script/schema/2017071/   the six XSD files, committed (Q1)
-  tests/         unit tests
-  e2e/           the end-to-end suite against a running stack (§8.3)
+  standards/ncpdp/script/schema/2017071/   the six XSD files, committed
+  tests/
 ```
 
 ### 5.2 Authentication, both directions
 
-- **Vendor -> gateway** (`POST /script/`): Basic credentials (Q2c).
+- **Vendor -> gateway** (`POST /script/`): Basic credentials.
   `ERX_VENDOR_CREDENTIALS` holds one or more `user:bcrypt-hash` pairs,
   compared in constant time; TLS and any IP restriction are the proxy's
   job. The `From` header's value is recorded as the sender, the Basic
@@ -825,15 +840,18 @@ services/erx-gateway/
   refused, since the standard does not tie them.
 - **pharmacy-api -> gateway** (`GET /api/v1/messages/{id}/`): a bearer
   service token for the gateway's audience with `erx:messages:read`,
-  verified by the gateway's own `TokenVerifier` -- discovery/JWKS through
+  verified by `pharmacy_auth`'s `TokenVerifier` and `HasScope` from the
+  shared package -- discovery/JWKS through
   `AUTH_ISSUER`/`AUTH_INTERNAL_URL`, `ERX_AUTH_AUDIENCE`, the dev key
-  locally (Q13). No `Staff`, no email: a gateway principal is a client id
-  and scopes.
-- **gateway -> pharmacy-api**: `clients/tokens.py` obtains a token by
+  locally. No `Staff`, no email: a gateway principal is a client id and
+  scopes; the gateway's authentication class is the package's
+  `ServiceTokenAuthentication`, which refuses a user token (a person never
+  calls the gateway).
+- **gateway -> pharmacy-api**: `pharmacy_auth.client` obtains a token by
   client credentials (or dev-signs one locally), caches it until 60 s
   before expiry (in Redis when configured, else in process), and refreshes
-  on a 401.
-- **gateway -> vendor**: Basic credentials (Q2e), `ERX_VENDOR_OUTBOUND_URL`
+  on a 401. pharmacy-api uses the same client to call the gateway.
+- **gateway -> vendor**: Basic credentials, `ERX_VENDOR_OUTBOUND_URL`
   and `ERX_VENDOR_OUTBOUND_CREDENTIALS` (`user:password`, a secret).
 
 ### 5.3 Receiving a message
@@ -854,9 +872,9 @@ or the prescriber's correction is the recovery for it. In order:
 | 5. Check the version attributes are `20170715` and `TestMessage` | other version: `900` + `3000` |
 | 6. Content checks the schema cannot express (`2000`, each with the element's XPath): `HumanPatient` not `NonHumanPatient`; `NonVeterinarian` not `Veterinarian`; prescriber `NPI` passes Luhn; `ProductCode/Code` with `ND` is a well-formed NDC; `Quantity/CodeListQualifier` is `38` or `QS`; `WrittenDate` <= `SentTime`; for a `CancelRx`, at least one of `RxReferenceNumber`, `PrescriberOrderNumber`, `RelatesToMessageID` | `900` + `2000` + XPath + a one-line description |
 | 7. Duplicate check on `(sender, MessageID)`: same id and same content hash -> **return the stored acknowledgement unchanged** (the vendor's retry of a lost ack); same id, different content | `900` + `220` "transaction is a duplicate" |
-| 8. **Persist, then acknowledge** (§5.5): the raw bytes to object storage, then in one database transaction the `ErxMessage` row and the `process_message` task; only when that commits is the `Status` built, stored on the row, and returned | storage or database unavailable: **`Error 600` "communication problem -- try again later" + `210` "unable to process, please resubmit"**, and HTTP 503 alongside (Q2d). Nothing is stored, so the retry is a first receipt |
+| 8. **Persist, then acknowledge** (§5.5): the raw bytes to object storage, then in one database transaction the `ErxMessage` row and the `process_message` task; only when that commits is the `Status` built, stored on the row, and returned | storage or database unavailable: **`Error 600` "communication problem -- try again later" + `210` "unable to process, please resubmit"**, and HTTP 503 alongside. Nothing is stored, so the retry is a first receipt |
 
-The recipient is **not** checked here (Q3): a message addressed to a
+The recipient is **not** checked here: a message addressed to a
 pharmacy this deployment does not serve is acknowledged and parked by
 intake for a person to route or reject, so the gateway holds no copy of
 the pharmacy's identifiers and the acknowledgement never depends on
@@ -911,7 +929,7 @@ object metadata and on the row. `boto3` with `endpoint_url` from
 `ERX_S3_ENDPOINT_URL` (LocalStack locally, unset for AWS). `ensure_bucket`
 is the gateway's migrate-time step: create the bucket if missing, set the
 public-access block -- idempotent, never at server start. Retention is a
-bucket lifecycle policy, not code; nothing in this round deletes.
+bucket lifecycle policy, not code; nothing here deletes.
 
 **`ErxMessage`** (the gateway's database): `message_id`, `sender`,
 `direction` (inbound/outbound), `message_type`, `related_to_message_id`,
@@ -1007,8 +1025,8 @@ two workers cannot both advance a message.
 `deliver(delivery_id)` -- the outbound side: build, validate, store, `POST`
 to the vendor with Basic credentials; their `Status` -> `delivered`; their
 `Error` -> `failed` (logged, manual); transport failure -> retry with the
-same backoff until `deadline_at` (`created_at + ERX_RESPONSE_DEADLINE`,
-Q2e), then `abandoned` and an ERROR log.
+same backoff until `deadline_at` (`created_at + ERX_RESPONSE_DEADLINE`),
+then `abandoned` and an ERROR log.
 
 `sweep()` -- self-rescheduling every `ERX_SWEEP_INTERVAL` (5 min): finds
 rows `received`/`processing` whose task is missing or whose
@@ -1016,7 +1034,7 @@ rows `received`/`processing` whose task is missing or whose
 enqueues them; polls every message in `needs_review` -- one resolved in
 pharmacy-api becomes `completed`/`failed` here and gets its delivery, one
 whose `review.deadline_at` has passed gets pharmacy-api's `expire` action
-called on it (Q19), which turns a parked cancel into a denial the next
+called on it, which turns a parked cancel into a denial the next
 poll delivers; counts `stuck`/`abandoned` rows and logs them. It is the
 backstop that makes the design safe against a lost task, not the primary
 mechanism. A pharmacist who has just resolved an intake need not wait for
@@ -1044,9 +1062,9 @@ queue (the oldest pending task's age).
 
 `DATABASE_URL`, `SECRET_KEY`, `ALLOWED_HOSTS`, `DEBUG`; `AUTH_ISSUER`,
 `AUTH_INTERNAL_URL`, `ERX_AUTH_AUDIENCE` (tokens we verify),
-`AUTH_CLIENT_ID`/`AUTH_CLIENT_SECRET`, `PHARMACY_API_URL`,
+`AUTH_CLIENT_ID`/`AUTH_CLIENT_SECRET` (deployed tiers only), `PHARMACY_API_URL`,
 `PHARMACY_API_AUDIENCE` (tokens we obtain), `AUTH_DEV_SIGNING_KEY` (local
-only); `ERX_VENDOR_CREDENTIALS`, `ERX_VENDOR_OUTBOUND_URL`,
+only; when set and no client secret is, service tokens are dev-signed); `ERX_VENDOR_CREDENTIALS`, `ERX_VENDOR_OUTBOUND_URL`,
 `ERX_VENDOR_OUTBOUND_CREDENTIALS`; `ERX_BUCKET`, `ERX_S3_ENDPOINT_URL`,
 `AWS_*`; `REDIS_URL`; `ERX_MAX_PROCESS_AGE` (48 h), `ERX_SWEEP_INTERVAL`
 (5 min), `ERX_RESPONSE_DEADLINE` (48 h: how long a response may stay
@@ -1061,7 +1079,7 @@ anything missing.
 
 ## 6. Research and recommendations
 
-### 6.1 Object storage simulation (Q4)
+### 6.1 Object storage simulation
 
 | | LocalStack (community) | MinIO | moto server | Garage / RustFS / SeaweedFS |
 |---|---|---|---|---|
@@ -1078,7 +1096,7 @@ integration against S3 semantics, so fidelity outranks footprint; the
 ephemerality is harmless because the bucket is recreated at migrate time
 and the e2e suite generates its own data per run.
 
-### 6.2 Task queue (Q5)
+### 6.2 Task queue
 
 What the gateway needs from a queue: (a) work that is enqueued
 **atomically with the message row** -- a message acknowledged to the vendor
@@ -1109,7 +1127,7 @@ against 6.1 in Stage 3 (fallback: pin Django 6.0 for the gateway, or the
 `django-tasks` backport); the library is young, so the gateway wraps
 enqueue/retry in one module (`tasks.py`) to keep the surface small.
 
-### 6.3 Redis (Q6)
+### 6.3 Redis
 
 Used for two things, neither load-bearing: the gateway's Django cache
 (`django-redis`) so DRF's throttle on the vendor endpoint counts across
@@ -1168,10 +1186,10 @@ type, NPI check digit, NDC format, quantity qualifier, written date --
 *in front of* the acknowledgement, where an `Error` is the
 answer and the vendor or prescriber corrects and resends under a new
 message id. What can still fail permanently afterwards is what only the
-pharmacy's own data can decide: a misrouted message (Q3), an ambiguous
+pharmacy's own data can decide: a misrouted message, an ambiguous
 patient a pharmacist could not resolve, a compound, a quantity-sufficient
 or non-integral quantity the pharmacist declined, a controlled substance
-(Q16), an emergency-cover prescription that does not reconcile, a rejected
+, an emergency-cover prescription that does not reconcile, a rejected
 review.
 
 For those, the intake sits in pharmacy-api's review queue (`needs_review`
@@ -1234,76 +1252,76 @@ the `ImmediateBackend` and stubbed HTTP, the backoff policy, the sweep, the
 lifecycle transitions, the document endpoint's authentication, the
 layering test.
 
-### 8.3 End-to-end
+### 8.3 e2e
 
-`e2e/` -- the bash suite -- stays exactly as it is, the pharmacy-api suite
-(Q18). The only change it sees is the `E2E_MINT_CMD` value the Makefile
-and CI pass in, because the Compose service it names is renamed.
+One suite, the bash one, with the cases split per service:
+`e2e/cases/pharmacy-api/*.sh` (the existing thirteen, moved) and
+`e2e/cases/erx-gateway/*.sh`. `run.sh` learns `PHARMACY_API_URL`,
+`ERX_GATEWAY_URL`, `VENDOR_SIM_URL` and `S3_URL` (keeping `BASE_URL` as
+pharmacy-api's for compatibility), its `E2E_MINT_CMD` default names
+`pharmacy-api`, `mint_token --service` gives it service tokens, and the
+report groups features by service. Every run generates its own message
+ids and patient names and never cleans up, as today. New cases:
 
-The gateway's suite is `services/erx-gateway/e2e/`: pytest, run against
-the **running Compose stack** (never the unit-test database; it is not
-collected by the unit run -- a separate directory, a separate `pytest.ini`
-marker and `conftest.py`), reading `ERX_GATEWAY_URL`, `PHARMACY_API_URL`,
-`VENDOR_SIM_URL`, `ERX_S3_ENDPOINT_URL`/`ERX_BUCKET` from the environment.
-It drives the vendor side with `httpx`, reads pharmacy-api with a
-dev-minted staff token and a dev-minted service token, and checks object
-storage with `boto3` against LocalStack. Every run generates its own
-message ids and patient names, and it never cleans up, the same rules the
-bash suite lives by. Cases:
-
-- `test_receive.py`: a valid `NewRx` -> HTTP 200, a schema-valid `Status
-  010` whose `RelatesToMessageID` is ours; **the raw bytes we posted
-  exist in the bucket under `inbound/…/<message_id>.xml`, byte-identical,
-  with the SHA-256 in the object's metadata** (Q4); each refusal -> the
-  `Error` code and `DescriptionCode` §5.3 names; the duplicate rule
-  (same content -> identical `Status`; different content -> `900`/`220`);
-  wrong Basic credentials -> 401.
-- `test_newrx_end_to_end.py`: `NewRx` in; poll pharmacy-api until the
-  intake is `completed` and the prescription exists with the message's
-  values (`intake_source = electronic`, quantity, refills + 1, NDC, the
-  prescriber's NPI, the patient's name and DOB); the same `NewRx` again
-  makes no second prescription; a controlled-substance `NewRx` ends
-  `needs_review` with the prescription `on_hold`, and a pharmacist's
-  `accept` activates it; a `NewRx` addressed to another NCPDP ID parks as
+- `pharmacy-api/95_erx_intake.sh`: a dev-minted service token, the
+  intake replay (201 then 200, one prescription), scope denial for a
+  staff token, the review list, `resolve/` on a parked intake, the
+  `needs_review` prescription refusing a fill.
+- `erx-gateway/10_receive.sh`: a valid `NewRx` -> HTTP 200 and a
+  schema-valid `Status 010` whose `RelatesToMessageID` is ours; **the
+  bytes we posted exist in the bucket under
+  `inbound/…/<message_id>.xml`** -- fetched with curl straight from
+  LocalStack's S3 endpoint (it enforces no signature by default; the
+  object's bytes are compared with `cmp` and its `x-amz-meta-sha256`
+  header with the digest the case computed) -- each refusal -> the
+  `Error` code and `DescriptionCode` §5.3 names; the duplicate rule (same
+  content -> identical `Status`; different content -> `900`/`220`); wrong
+  Basic credentials -> 401.
+- `erx-gateway/20_newrx_end_to_end.sh`: `NewRx` in; poll pharmacy-api
+  until the intake is `completed` and the prescription exists with the
+  message's values (`intake_source = electronic`, quantity, refills + 1,
+  NDC, the prescriber's NPI, the patient's name and DOB); the same `NewRx`
+  again makes no second prescription; a controlled-substance `NewRx` ends
+  `needs_review` with the prescription `needs_review`, and a pharmacist's
+  `accept` activates it; a `NewRx` without an NDC parks as
+  `medication_unidentified`; one addressed to another NCPDP ID parks as
   `unknown_pharmacy`.
-- `test_cancelrx.py`: cancel the prescription above -> the intake is
-  `approved`, the prescription `cancelled`, and a schema-valid
+- `erx-gateway/30_cancelrx.sh`: cancel the prescription above -> the
+  intake is `approved`, the prescription `cancelled`, and a schema-valid
   `CancelRxResponse/Approved` arrives at `vendor-sim` with
-  `RelatesToMessageID` = the `CancelRx` id and our Rx number; a `CancelRx`
-  for a prescription with a fill in flight parks as
-  `cancel_with_fill_in_flight` with a deadline, and a pharmacist's `deny`
-  (via `respond/`) produces `Denied` at `vendor-sim` without waiting for
-  the sweep; an unknown one -> `Denied` with a `DenialReason`.
-- `test_outbound.py`: the **outbound** object exists in the bucket for
-  every response sent, and `vendor-sim`'s `Status` to us is stored.
+  `RelatesToMessageID` = the `CancelRx` id and our Rx number, **and its
+  bytes exist in the bucket under `outbound/…`**; a `CancelRx` for a
+  prescription with a fill in flight parks as `cancel_with_fill_in_flight`
+  with a deadline, and a pharmacist's `deny` followed by `respond/`
+  produces `Denied` at `vendor-sim` without waiting for the sweep; an
+  unknown one -> `Denied` with a `DenialReason`.
 
 `vendor-sim` is `manage.py vendor_sim` in the gateway image (local only,
 like `seed_local`): an HTTP server that requires the outbound Basic
 credentials, accepts what the gateway sends, answers a SCRIPT `Status
 000`, and exposes `GET /received/` so the suite can assert. It is how the
 suite plays the vendor's inbound side; the suite itself plays the
-outbound side with `httpx`. Since there is no vendor sandbox (Q2a), this
-is the only counterparty the gateway will ever be exercised against before
+outbound side with curl. Since there is no vendor sandbox, this is
+the only counterparty the gateway will ever be exercised against before
 production, so its behaviour is kept strictly to the schema.
 
 ## 9. Stages, in order, each a reviewable change with the checks green
 
 | Stage | Delivers | Gate |
 |---|---|---|
-| 1 | §3: the move, the workspace, two Dockerfiles, Compose renames, per-service env and migrate, CI matrix, e2e split, a gateway skeleton with `health/` | existing tests and e2e unchanged and green in the new layout |
-| 2a | §4.1-4.2: scopes, the service principal, audit attribution, `seed_auth` M2M apps and the check, `mint_token --service` | a dev-signed and a real client-credentials token both reach a scoped endpoint; a user token is unchanged |
-| 2b | §4.4: model fields and relaxations, migrations, serializers, docs | every relaxation covered by a test; `makemigrations --check` clean |
+| 1 | §3: the move, the workspace, the `pharmacy-auth` package extracted (§4.2.0), two Dockerfiles, Compose renames, per-service env and migrate, CI matrix, e2e split, a gateway skeleton with `health/` | existing tests and e2e unchanged and green in the new layout |
+| 2a | §4.1-4.2: scopes, the service principal, audit attribution, `seed_auth` M2M apps and the check, `mint_token --service` | a dev-signed service token reaches a scoped endpoint and the seed's real client-credentials check passes; a user token is unchanged |
+| 2b | §4.4-4.5: model fields and relaxations, the `needs_review` status, decimal quantities (its own commit), migrations, serializers, docs | every relaxation covered by a test; the full suite and e2e green after the decimal change; `makemigrations --check` clean |
 | 2c | §4.3: `ErxIntake`, the intake service and endpoint, matching, `CancelRx` outcomes, review, the gateway client (stubbed) | the idempotency tests, including concurrency |
 | 3 | §5.1-5.6: the gateway project, storage, `ErxMessage`, XSD validation, parsing, responses, the receipt endpoint, the document endpoint, Compose `s3`/`redis`/worker | a `NewRx` is acknowledged and retrievable; every refusal answers the right `Error` |
-| 4 | §5.7-5.9 and §7: tasks, the pharmacy-api client, `NewRx` processing, `CancelRx` + `CancelRxResponse`, parked cancels and deadlines, `Verify` on `ReturnReceipt`, the sweep, `vendor-sim`, ops endpoints, the gateway's e2e suite | §8.3 green end to end, bucket check included |
+| 4 | §5.7-5.9 and §7: tasks, the pharmacy-api client, `NewRx` processing, `CancelRx` + `CancelRxResponse`, parked cancels and deadlines, `Verify` on `ReturnReceipt`, the sweep, `vendor-sim`, ops endpoints, the gateway's e2e cases | §8.3 green end to end, bucket check included |
 | 5 | docs: `docs/erx.md`, `docs/deployment.md` (both services), `AGENTS.md`, README; `plans/e-prescribing/plan.md` status -> implemented | -- |
 
-Stages 2b-2c need Q11 and Q14; Stage 2a needs Q12; Stage 3 needs Q13;
-Stage 4 needs Q18 and Q19. Stage 1 needs nothing further.
+Stage 1 first; 2a-2c in order; 3 and 4 after 2c; 5 last.
 
 ---
 
-## 10. Interpretations I have taken (beyond the questions in §0)
+## 10. Interpretations of the brief
 
 - "Restructure into two services" means two Django projects, two
   databases, HTTP-only between them; no shared ORM models, no shared
@@ -1312,9 +1330,9 @@ Stage 4 needs Q18 and Q19. Stage 1 needs nothing further.
   service needs before serving (the bucket), under the same
   never-at-boot rule.
 - "The gateway calls an endpoint ... it should not send the whole xml
-  message, it should send a message id, pharmacy-npi" -- I added the
-  NCPDP ID as an optional third field because the NPI is optional in the
-  standard's pharmacy block (Q3 asks you to confirm the pharmacy side).
+  message, it should send a message id, pharmacy-npi" -- the NCPDP ID is
+  sent as well, and is the required one, because the NPI is optional in
+  the standard's pharmacy block while the header's `To` is not.
 - "Related" messages for `NewRx`/`CancelRx` intake are `Status`, `Error`,
   `CancelRxResponse`, and `Verify` when a request asks for a return
   receipt; nothing else (`NewRxResponseDenied` is a prescriber's message,
@@ -1329,12 +1347,12 @@ Stage 4 needs Q18 and Q19. Stage 1 needs nothing further.
   not by trusting the gateway to call once.
 - "In-memory caching" is a cache, not a queue or a lock; Postgres does the
   latter two.
-- "Park the prescription in an intake queue" (Q3) and "flag for review"
-  (Q16) are the same mechanism: `ErxIntake.status = needs_review` with a
+- "Park the prescription in an intake queue" and "flag for review"
+  are the same mechanism: `ErxIntake.status = needs_review` with a
   `review_kind`, listed by `GET /erx/intakes/` and resolved by `resolve/`.
   Where the message has produced a prescription, that prescription is
-  `on_hold` until the review ends, so nothing parked can be filled.
-- "A pharmacist can also trigger the response" (Q2e) means a pharmacist
+  `needs_review` until the review ends, so nothing parked can be filled.
+- "A pharmacist can also trigger the response" means a pharmacist
   resolves the parked intake in pharmacy-api and, if they want it sent
   before the next sweep, calls `respond/`; they never compose a SCRIPT
   message themselves.
